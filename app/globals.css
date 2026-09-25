@@ -79,6 +79,34 @@ button:disabled { cursor: wait; opacity: .65; }
 .expense-category { display: inline-block; margin: 0 0 7px; padding: 2px 6px; color: var(--accent); border: 1px solid var(--line-strong); font-family: var(--font-technical); font-size: .68rem; text-transform: uppercase; }
 .expense-list time { color: var(--muted-text); font-family: var(--font-technical); font-size: .75rem; }
 .expense-list strong { color: var(--primary-text); font-family: var(--font-technical); font-size: .95rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.expense-search { margin-top: 20px; }
+.expense-search label { display: block; margin-bottom: 8px; font-family: var(--font-technical); font-size: .76rem; font-weight: 600; letter-spacing: .055em; text-transform: uppercase; }
+.expense-search > div { display: flex; gap: 8px; }
+.expense-search input { min-width: 0; flex: 1; min-height: 42px; border: 1px solid var(--line-strong); padding: 9px 10px; color: var(--primary-text); background: var(--canvas); font: inherit; color-scheme: dark; }
+.expense-search input:focus { outline: 3px solid var(--focus-ring); outline-offset: 2px; border-color: var(--accent); }
+.clear-search { width: auto; min-height: 42px; margin: 0; padding: 8px 12px; border-color: var(--line-strong); background: transparent; }
+.search-empty { padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.calendar { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line); }
+.calendar-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.calendar h3, .calendar h4 { margin: 0; font-size: .95rem; }
+.calendar-navigation { display: flex; align-items: center; gap: 7px; }
+.calendar-navigation p { min-width: 122px; margin: 0; color: var(--muted-text); font-family: var(--font-technical); font-size: .74rem; text-align: center; }
+.calendar-navigation button { width: auto; min-height: 32px; margin: 0; padding: 7px 9px; font-size: .66rem; }
+.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.calendar-weekdays { margin-top: 16px; color: var(--muted-text); font-family: var(--font-technical); font-size: .65rem; text-align: center; }
+.calendar-grid { margin-top: 5px; }
+.calendar-blank { min-height: 50px; }
+.calendar-day { display: flex; min-width: 0; min-height: 50px; margin: 0; padding: 5px 3px; border-color: var(--line); background: transparent; color: var(--primary-text); align-items: center; justify-content: flex-start; flex-direction: column; font-size: .72rem; letter-spacing: 0; text-transform: none; }
+.calendar-day:hover, .calendar-day.has-expenses { border-color: var(--line-strong); background: var(--panel-raised); }
+.calendar-day.selected { border-color: var(--focus-ring); box-shadow: inset 0 0 0 1px var(--focus-ring); }
+.calendar-day small { display: block; max-width: 100%; overflow: hidden; color: var(--accent); font-family: var(--font-technical); font-size: .54rem; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.selected-day { margin-top: 14px; padding: 14px; border: 1px solid var(--line); background: var(--canvas); }
+.selected-day h4 { margin-bottom: 10px; }
+.selected-day p { margin: 0; color: var(--muted-text); font-size: .85rem; }
+.selected-day ul { margin: 0; padding: 0; list-style: none; }
+.selected-day li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: .84rem; }
+.selected-day li:first-child { border-top: 0; padding-top: 0; }
+.selected-day em { color: var(--accent); font-family: var(--font-technical); font-size: .72rem; font-style: normal; }
 
 @media (max-width: 720px) {
   main { padding: 22px 20px 44px; }
@@ -86,6 +114,8 @@ button:disabled { cursor: wait; opacity: .65; }
   .tracker-grid { grid-template-columns: 1fr; }
   .entry-panel, .expenses-panel { padding: 22px; }
   .form-actions { grid-template-columns: 1fr; gap: 0; }
+  .calendar-heading { align-items: flex-start; flex-direction: column; }
+  .calendar-navigation { width: 100%; justify-content: space-between; }
 }
 
 @media (max-width: 420px) {
