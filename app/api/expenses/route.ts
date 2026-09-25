@@ -9,9 +9,23 @@ function expenseRepository() {
 }
 
 export function GET(): Response {
-  return getExpenses(expenseRepository());
+  try {
+    return getExpenses(expenseRepository());
+  } catch {
+    return Response.json(
+      { error: "We couldn't load expenses. Please try again." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request): Promise<Response> {
-  return postExpense(request, expenseRepository());
+  try {
+    return await postExpense(request, expenseRepository());
+  } catch {
+    return Response.json(
+      { error: "We couldn't save this expense. Please try again." },
+      { status: 500 },
+    );
+  }
 }

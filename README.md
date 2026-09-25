@@ -1,6 +1,8 @@
 # Ledger
 
-A minimal, local-first expense-only financial tracker with a JSON API backed by SQLite.
+Ledger is a minimal, local-first expense tracker. It provides a small Next.js web interface and a JSON API backed by a local SQLite database.
+
+The MVP records expenses only: amount, description, and date. It does not require an account, credentials, or an external service.
 
 ## Requirements
 
@@ -17,6 +19,19 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). To expose the development server on the network, use `HOST=0.0.0.0 npm run dev`.
+
+To run the production build locally:
+
+```bash
+npm run build
+npm start
+```
+
+To run the complete test suite:
+
+```bash
+npm test
+```
 
 ## Commands
 
@@ -65,3 +80,7 @@ Amounts are integer minor currency units (for example, `1999` means 19.99 in a t
 ## Data model
 
 The `expenses` table stores `id`, `amount_cents`, `description`, `date`, and `created_at`. API responses expose the same values as `id`, `amountCents`, `description`, `date`, and `createdAt`. The database enforces non-null fields and a positive `amount_cents`; `created_at` is generated server-side as an ISO-8601 UTC timestamp.
+
+## Out of scope
+
+This MVP intentionally has no authentication, budgets, income tracking, categories, charts, expense editing or deletion, external services, or deployment configuration.

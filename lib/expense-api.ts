@@ -43,7 +43,14 @@ function validateExpense(value: unknown): ValidationResult {
 }
 
 export function getExpenses(repository: ExpenseRepository): Response {
-  return Response.json({ expenses: repository.list() });
+  try {
+    return Response.json({ expenses: repository.list() });
+  } catch {
+    return Response.json(
+      { error: "We couldn't load expenses. Please try again." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function postExpense(
@@ -62,8 +69,15 @@ export async function postExpense(
     return Response.json({ error: validation.error }, { status: 400 });
   }
 
-  return Response.json(
-    { expense: repository.create(validation.value) },
-    { status: 201 },
-  );
+  try {
+    return Response.json(
+      { expense: repository.create(validation.value) },
+      { status: 201 },
+    );
+  } catch {
+    return Response.json(
+      { error: "We couldn't save this expense. Please try again." },
+      { status: 500 },
+    );
+  }
 }
