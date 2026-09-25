@@ -1,7 +1,28 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
+import ExpenseTracker from "../app/expense-tracker";
+import nextConfig from "../next.config";
 import { saveExpense, validateExpenseForm } from "../lib/expense-form";
+
+test("the dev server permits the browser and workspace proxy to load client assets", () => {
+  assert.deepEqual(nextConfig.allowedDevOrigins, ["127.0.0.1", "10.20.30.105"]);
+});
+
+test("the expense form uses the client submit handler without a native action", () => {
+  const markup = renderToStaticMarkup(createElement(ExpenseTracker));
+  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
+  const pageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(markup, /<form\b[^>]*\saction=/);
+  assert.match(source, /^"use client";/);
+  assert.match(pageSource, /import ExpenseTracker from "\.\/expense-tracker";/);
+  assert.match(source, /<form onSubmit=\{handleSubmit\} noValidate>/);
+  assert.match(source, /async function handleSubmit\(event: FormEvent<HTMLFormElement>\) \{\s+event\.preventDefault\(\);/);
+});
 
 test("validateExpenseForm converts valid IDR input to the API request shape", () => {
   assert.deepEqual(validateExpenseForm({
