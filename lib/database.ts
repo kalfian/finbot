@@ -32,8 +32,8 @@ export function initializeDatabase(database = openDatabase()): void {
       database.exec("ALTER TABLE expenses RENAME TO expenses_legacy;");
       createExpensesTable(database);
       database.exec(`
-        INSERT INTO expenses (id, amount_cents, description, date, created_at)
-        SELECT id, amount_cents, description, spent_on, created_at
+        INSERT INTO expenses (id, amount_cents, description, category, date, created_at)
+        SELECT id, amount_cents, description, 'Other', spent_on, created_at
         FROM expenses_legacy;
         DROP TABLE expenses_legacy;
       `);
@@ -42,6 +42,9 @@ export function initializeDatabase(database = openDatabase()): void {
   }
 
   createExpensesTable(database);
+  if (columns.length > 0 && !columns.some((column) => column.name === "category")) {
+    database.exec("ALTER TABLE expenses ADD COLUMN category TEXT NOT NULL DEFAULT 'Other';");
+  }
 }
 
 function createExpensesTable(database: Database.Database): void {
@@ -50,6 +53,7 @@ function createExpensesTable(database: Database.Database): void {
       id INTEGER PRIMARY KEY,
       amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
       description TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'Other',
       date TEXT NOT NULL,
       created_at TEXT NOT NULL
     );

@@ -6,22 +6,35 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import ExpenseTracker from "../app/expense-tracker";
 import nextConfig from "../next.config";
-import { getBrowserLocalDate, saveExpense, validateExpenseForm } from "../lib/expense-form";
+import { getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, validateExpenseForm } from "../lib/expense-form";
 
-test("the tracker is a focused expense page with a browser-local date default", () => {
+test("the tracker is a focused expense page with a browser-local datetime default", () => {
   const markup = renderToStaticMarkup(createElement(ExpenseTracker));
   const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
 
   assert.doesNotMatch(markup, /<nav\b/);
   assert.doesNotMatch(source, /Every expense, in one place\./);
-  assert.match(source, /getBrowserLocalDate\(\)/);
-  assert.match(source, /setDate\(getBrowserLocalDate\(\)\)/);
+  assert.match(source, /type="datetime-local"/);
+  assert.match(source, /getBrowserLocalDateTime\(\)/);
+  assert.match(source, /setDate\(getBrowserLocalDateTime\(\)\)/);
+  assert.match(source, /<label htmlFor="category">Category<\/label>/);
+  assert.match(source, /Clear form/);
 });
 
-test("getBrowserLocalDate creates a date-input value from local calendar values", () => {
+test("getBrowserLocalDateTime creates a datetime-local value from local calendar values", () => {
   const localDate = new Date(0);
   localDate.setFullYear(2026, 1, 3);
-  assert.equal(getBrowserLocalDate(localDate), "2026-02-03");
+  localDate.setHours(9, 7, 0, 0);
+  assert.equal(getBrowserLocalDateTime(localDate), "2026-02-03T09:07");
+});
+
+test("localDateTimeToUtc converts the browser-local datetime before persistence", () => {
+  const localDate = new Date(0);
+  localDate.setFullYear(2026, 1, 3);
+  localDate.setHours(9, 7, 0, 0);
+  const localValue = getBrowserLocalDateTime(localDate);
+  assert.equal(localDateTimeToUtc(localValue), localDate.toISOString());
+  assert.equal(localDateTimeToUtc("2026-02-30T09:07"), null);
 });
 
 test("the dev server permits the browser and workspace proxy to load client assets", () => {
@@ -36,7 +49,7 @@ test("the expense form uses the client submit handler without a native action", 
   assert.doesNotMatch(markup, /<form\b[^>]*\saction=/);
   assert.match(source, /^"use client";/);
   assert.match(pageSource, /import ExpenseTracker from "\.\/expense-tracker";/);
-  assert.match(source, /<form onSubmit=\{handleSubmit\} noValidate>/);
+  assert.match(source, /<form onSubmit=\{handleSubmit\} onReset=\{handleReset\} noValidate>/);
   assert.match(source, /async function handleSubmit\(event: FormEvent<HTMLFormElement>\) \{\s+event\.preventDefault\(\);/);
 });
 
@@ -44,24 +57,28 @@ test("validateExpenseForm converts valid IDR input to the API request shape", ()
   assert.deepEqual(validateExpenseForm({
     amount: "12500.50",
     description: "  Train fare  ",
-    date: "2026-02-14",
+    category: "Transport",
+    date: "2026-02-14T08:30",
   }), {
-    value: { amountCents: 1250050, description: "Train fare", date: "2026-02-14" },
+    value: { amountCents: 1250050, description: "Train fare", category: "Transport", date: new Date("2026-02-14T08:30").toISOString() },
   });
 });
 
 test("validateExpenseForm reports each client-side validation boundary", () => {
-  assert.deepEqual(validateExpenseForm({ amount: "0", description: "Lunch", date: "2026-02-14" }), {
+  assert.deepEqual(validateExpenseForm({ amount: "0", description: "Lunch", category: "Food", date: "2026-02-14T08:30" }), {
     error: "Enter an amount greater than Rp0,00, with no more than two decimal places.",
   });
-  assert.deepEqual(validateExpenseForm({ amount: "1.234", description: "Lunch", date: "2026-02-14" }), {
+  assert.deepEqual(validateExpenseForm({ amount: "1.234", description: "Lunch", category: "Food", date: "2026-02-14T08:30" }), {
     error: "Enter an amount greater than Rp0,00, with no more than two decimal places.",
   });
-  assert.deepEqual(validateExpenseForm({ amount: "1", description: "   ", date: "2026-02-14" }), {
+  assert.deepEqual(validateExpenseForm({ amount: "1", description: "   ", category: "Food", date: "2026-02-14T08:30" }), {
     error: "Enter a description for this expense.",
   });
-  assert.deepEqual(validateExpenseForm({ amount: "1", description: "Lunch", date: "" }), {
-    error: "Choose the date of this expense.",
+  assert.deepEqual(validateExpenseForm({ amount: "1", description: "Lunch", category: "Food", date: "" }), {
+    error: "Choose the date and time of this expense.",
+  });
+  assert.deepEqual(validateExpenseForm({ amount: "1", description: "Lunch", category: "Unknown", date: "2026-02-14T08:30" }), {
+    error: "Choose a category for this expense.",
   });
 });
 
@@ -72,7 +89,7 @@ test("saveExpense posts the request and handles success and API errors", async (
     return new Response(JSON.stringify({ expense: { id: 1 } }), { status: 201 });
   };
 
-  await saveExpense({ amountCents: 1500, description: "Coffee", date: "2026-02-14" }, successfulFetch);
+  await saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, successfulFetch);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].input, "/api/expenses");
   assert.equal(calls[0].init?.method, "POST");
@@ -80,18 +97,19 @@ test("saveExpense posts the request and handles success and API errors", async (
   assert.deepEqual(JSON.parse(calls[0].init?.body as string), {
     amountCents: 1500,
     description: "Coffee",
-    date: "2026-02-14",
+    category: "Food",
+    date: "2026-02-14T08:30:00.000Z",
   });
 
   const failingFetch: typeof fetch = async () => new Response(JSON.stringify({ error: "Date is unavailable." }), { status: 400 });
   await assert.rejects(
-    saveExpense({ amountCents: 1500, description: "Coffee", date: "2026-02-14" }, failingFetch),
+    saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, failingFetch),
     { message: "Date is unavailable." },
   );
 
   const malformedErrorFetch: typeof fetch = async () => new Response("not json", { status: 500 });
   await assert.rejects(
-    saveExpense({ amountCents: 1500, description: "Coffee", date: "2026-02-14" }, malformedErrorFetch),
+    saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, malformedErrorFetch),
     { message: "We couldn't save this expense. Please try again." },
   );
 });

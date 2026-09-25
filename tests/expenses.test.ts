@@ -23,12 +23,14 @@ test("repository creates expenses and lists them by newest expense date", () => 
     const older = repository.create({
       amountCents: 1250,
       description: "Coffee beans",
-      date: "2026-01-01",
+      category: "Food",
+      date: "2026-01-01T08:00:00.000Z",
     });
     const newer = repository.create({
       amountCents: 4500,
       description: "Groceries",
-      date: "2026-01-03",
+      category: "Food",
+      date: "2026-01-03T08:00:00.000Z",
     });
 
     assert.deepEqual(repository.list(), [newer, older]);
@@ -47,7 +49,8 @@ test("repository persists expenses after a file-backed database is reopened", ()
     const created = createExpenseRepository(firstDatabase).create({
       amountCents: 2350,
       description: "Train fare",
-      date: "2026-02-15",
+      category: "Transport",
+      date: "2026-02-15T08:00:00.000Z",
     });
     firstDatabase.close();
 
@@ -64,6 +67,34 @@ test("repository persists expenses after a file-backed database is reopened", ()
   }
 });
 
+test("database migration gives existing expenses the backwards-compatible Other category", () => {
+  const database = new Database(":memory:");
+  try {
+    database.exec(`
+      CREATE TABLE expenses (
+        id INTEGER PRIMARY KEY,
+        amount_cents INTEGER NOT NULL,
+        description TEXT NOT NULL,
+        date TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO expenses (amount_cents, description, date, created_at)
+      VALUES (1000, 'Legacy expense', '2026-02-14', '2026-02-14T08:30:00.000Z');
+    `);
+    initializeDatabase(database);
+    assert.deepEqual(createExpenseRepository(database).list(), [{
+      id: 1,
+      amountCents: 1000,
+      description: "Legacy expense",
+      category: "Other",
+      date: "2026-02-14",
+      createdAt: "2026-02-14T08:30:00.000Z",
+    }]);
+  } finally {
+    database.close();
+  }
+});
+
 test("POST creates an expense and GET returns the JSON list", async () => {
   const { database, repository } = createTestRepository();
   try {
@@ -74,7 +105,8 @@ test("POST creates an expense and GET returns the JSON list", async () => {
         body: JSON.stringify({
           amountCents: 1999,
           description: "Lunch",
-          date: "2026-02-14",
+          category: "Food",
+          date: "2026-02-14T08:30:00.000Z",
         }),
       }),
       repository,
@@ -87,7 +119,8 @@ test("POST creates an expense and GET returns the JSON list", async () => {
         id: 1,
         amountCents: 1999,
         description: "Lunch",
-        date: "2026-02-14",
+        category: "Food",
+        date: "2026-02-14T08:30:00.000Z",
         createdAt: created.expense.createdAt,
       },
     });
@@ -118,32 +151,37 @@ test("POST rejects invalid input without creating an expense", async () => {
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: 1.5, description: "Fraction", date: "2026-02-14" }),
+        body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Unknown", date: "2026-02-14T08:30:00.000Z" }),
       }),
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: Number.MAX_SAFE_INTEGER + 1, description: "Unsafe", date: "2026-02-14" }),
+        body: JSON.stringify({ amountCents: 1.5, description: "Fraction", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: 0, description: "Free", date: "2026-02-14" }),
+        body: JSON.stringify({ amountCents: Number.MAX_SAFE_INTEGER + 1, description: "Unsafe", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: -100, description: "Refund", date: "2026-02-14" }),
+        body: JSON.stringify({ amountCents: 0, description: "Free", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: 100, description: "   ", date: "2026-02-14" }),
+        body: JSON.stringify({ amountCents: -100, description: "Refund", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: 100, description: "Impossible date", date: "2026-02-30" }),
+        body: JSON.stringify({ amountCents: 100, description: "   ", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
+      }),
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amountCents: 100, description: "Impossible date", category: "Food", date: "2026-02-30T08:30:00.000Z" }),
       }),
       new Request("http://localhost/api/expenses", {
         method: "POST",
@@ -178,7 +216,7 @@ test("API returns a generic error when persistence fails", async () => {
     new Request("http://localhost/api/expenses", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ amountCents: 100, description: "Coffee", date: "2026-02-14" }),
+      body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
     }),
     failingRepository,
   );
@@ -229,7 +267,7 @@ test("route handlers return generic errors when database setup fails", async () 
       new Request("http://localhost/api/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: 100, description: "Coffee", date: "2026-02-14" }),
+        body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
     );
     assert.equal(postResponse.status, 500);

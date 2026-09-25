@@ -3,20 +3,40 @@ import { toAmountCents } from "./money";
 export type ExpenseFormValues = {
   amount: string;
   description: string;
+  category: string;
   date: string;
 };
 
 export type NewExpenseRequest = {
   amountCents: number;
   description: string;
+  category: ExpenseCategory;
   date: string;
 };
 
-export function getBrowserLocalDate(now: Date = new Date()): string {
+export const EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Shopping", "Health", "Other"] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+export function getBrowserLocalDateTime(now: Date = new Date()): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+/** Converts a datetime-local value from the browser's timezone into an ISO UTC instant. */
+export function localDateTimeToUtc(value: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || getBrowserLocalDateTime(date) !== value) return null;
+  return date.toISOString();
+}
+
+function isExpenseCategory(value: string): value is ExpenseCategory {
+  return (EXPENSE_CATEGORIES as readonly string[]).includes(value);
 }
 
 type ValidationResult =
@@ -31,15 +51,23 @@ export function validateExpenseForm(values: ExpenseFormValues): ValidationResult
   if (!values.description.trim()) {
     return { error: "Enter a description for this expense." };
   }
+  if (!isExpenseCategory(values.category)) {
+    return { error: "Choose a category for this expense." };
+  }
   if (!values.date) {
-    return { error: "Choose the date of this expense." };
+    return { error: "Choose the date and time of this expense." };
+  }
+  const date = localDateTimeToUtc(values.date);
+  if (!date) {
+    return { error: "Choose a valid date and time for this expense." };
   }
 
   return {
     value: {
       amountCents,
       description: values.description.trim(),
-      date: values.date,
+      category: values.category,
+      date,
     },
   };
 }

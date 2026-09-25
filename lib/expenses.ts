@@ -4,6 +4,7 @@ export type Expense = {
   id: number;
   amountCents: number;
   description: string;
+  category: string;
   date: string;
   createdAt: string;
 };
@@ -14,6 +15,7 @@ type ExpenseRow = {
   id: number;
   amount_cents: number;
   description: string;
+  category: string;
   date: string;
   created_at: string;
 };
@@ -23,6 +25,7 @@ function toExpense(row: ExpenseRow): Expense {
     id: row.id,
     amountCents: row.amount_cents,
     description: row.description,
+    category: row.category || "Other",
     date: row.date,
     createdAt: row.created_at,
   };
@@ -38,8 +41,8 @@ export function createExpenseRepository(
   database: Database.Database,
 ): ExpenseRepository {
   const insert = database.prepare(`
-    INSERT INTO expenses (amount_cents, description, date, created_at)
-    VALUES (@amountCents, @description, @date, @createdAt)
+    INSERT INTO expenses (amount_cents, description, category, date, created_at)
+    VALUES (@amountCents, @description, @category, @date, @createdAt)
   `);
   const findById = database.prepare("SELECT * FROM expenses WHERE id = ?");
   const list = database.prepare(
