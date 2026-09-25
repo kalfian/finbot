@@ -1,19 +1,86 @@
-const highlights = [
-  ["One clear view", "Keep the costs that matter in one quiet, focused place."],
-  ["Local by default", "Your expense data starts in a SQLite file on your machine."],
-  ["Built to grow", "A clean foundation for recording expenses when that workflow arrives."],
-];
+"use client";
+
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { calculateTotal, formatCurrency, toAmountCents } from "@/lib/money";
+
+type Expense = { id: number; amountCents: number; description: string; date: string; createdAt: string };
 
 export default function Home() {
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [date, setDate] = useState("");
+
+  const loadExpenses = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError("");
+    try {
+      const response = await fetch("/api/expenses");
+      const body: unknown = await response.json();
+      if (!response.ok || !body || typeof body !== "object" || !("expenses" in body) || !Array.isArray(body.expenses)) throw new Error();
+      setExpenses(body.expenses as Expense[]);
+    } catch {
+      setLoadError("We couldn't load your expenses. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(loadExpenses);
+  }, [loadExpenses]);
+  const total = useMemo(() => calculateTotal(expenses.map((expense) => expense.amountCents)), [expenses]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+    setSuccessMessage("");
+    const amountCents = toAmountCents(amount);
+    if (amountCents === null) { setFormError("Enter an amount greater than $0.00, with no more than two decimal places."); return; }
+    if (!description.trim()) { setFormError("Enter a description for this expense."); return; }
+    if (!date) { setFormError("Choose the date of this expense."); return; }
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch("/api/expenses", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountCents, description: description.trim(), date }) });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        const message = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : "We couldn't save this expense. Please try again.";
+        throw new Error(message);
+      }
+      setAmount(""); setDescription(""); setDate(""); setSuccessMessage("Expense added.");
+      await loadExpenses();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "We couldn't save this expense. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return <main>
     <nav aria-label="Primary navigation"><a className="wordmark" href="#top">Ledger<span>.</span></a><span className="nav-label">Expense tracker</span></nav>
-    <section className="hero" id="top">
-      <p className="eyebrow">A simpler money habit</p><h1>See where your money goes.</h1>
-      <p className="intro">Ledger is a private, expense-only tracker designed to make everyday spending easier to notice.</p>
-      <div className="status" role="status"><span className="status-dot" aria-hidden="true" />Your local tracker is ready to set up</div>
-    </section>
-    <section className="highlights" aria-label="What Ledger offers">
-      {highlights.map(([title, description], index) => <article className="highlight" key={title}><span className="number">0{index + 1}</span><h2>{title}</h2><p>{description}</p></article>)}
+    <header className="page-header" id="top"><p className="eyebrow">Your spending</p><h1>Every expense, in one place.</h1><p className="intro">Record what you spend and keep a clear view of your total.</p></header>
+    <section className="tracker-grid" aria-label="Expense tracker">
+      <section className="entry-panel" aria-labelledby="add-expense-heading">
+        <h2 id="add-expense-heading">Add an expense</h2>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="field"><label htmlFor="amount">Amount</label><div className="amount-input"><span aria-hidden="true">$</span><input id="amount" name="amount" type="text" inputMode="decimal" placeholder="0.00" value={amount} onChange={(event) => setAmount(event.target.value)} aria-describedby="amount-hint" required /></div><p className="hint" id="amount-hint">Use dollars and cents.</p></div>
+          <div className="field"><label htmlFor="description">Description</label><input id="description" name="description" type="text" placeholder="e.g. Groceries" value={description} onChange={(event) => setDescription(event.target.value)} required /></div>
+          <div className="field"><label htmlFor="date">Date</label><input id="date" name="date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div>
+          {formError && <p className="form-message error" role="alert">{formError}</p>}
+          {successMessage && <p className="form-message success" role="status">{successMessage}</p>}
+          <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Adding expense…" : "Add expense"}</button>
+        </form>
+      </section>
+      <section className="expenses-panel" aria-labelledby="expenses-heading">
+        <div className="expenses-heading"><div><p className="eyebrow">Total spend</p><p className="total">{formatCurrency(total)}</p></div><h2 id="expenses-heading">Expenses</h2></div>
+        {isLoading ? <p className="state" role="status">Loading expenses…</p> : loadError ? <div className="state error" role="alert"><p>{loadError}</p><button className="text-button" type="button" onClick={() => void loadExpenses()}>Try again</button></div> : expenses.length === 0 ? <p className="state">No expenses recorded yet. Add your first one to get started.</p> : <ul className="expense-list">{expenses.map((expense) => <li key={expense.id}><div><p className="expense-description">{expense.description}</p><time dateTime={expense.date}>{expense.date}</time></div><strong>{formatCurrency(expense.amountCents)}</strong></li>)}</ul>}
+      </section>
     </section>
   </main>;
 }
