@@ -30,16 +30,14 @@ body {
   font-family: var(--font-ui);
 }
 
-main { max-width: 1180px; margin: 0 auto; padding: 26px 48px 64px; }
-nav { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.wordmark { color: var(--primary-text); font-family: var(--font-technical); font-size: 1.15rem; font-weight: 700; letter-spacing: -.045em; text-decoration: none; }
-.wordmark span { color: var(--accent); }
-.nav-label, .eyebrow { color: var(--muted-text); font-family: var(--font-technical); font-size: .72rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
-.page-header { max-width: 780px; padding: 92px 0 54px; }
+main { max-width: 1060px; margin: 0 auto; padding: 38px 32px 56px; }
+.eyebrow { color: var(--muted-text); font-family: var(--font-technical); font-size: .72rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+.tracker-intro { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+.tracker-intro h1 { margin: 0; font-size: clamp(1.65rem, 4vw, 2.3rem); }
+.tracker-intro p { margin: 0; color: var(--muted-text); font-size: .95rem; }
 .eyebrow { margin: 0 0 14px; color: var(--accent); }
 h1, h2 { font-family: var(--font-ui); }
-h1 { max-width: 760px; margin: 0; font-size: clamp(3.1rem, 7.2vw, 6.6rem); font-weight: 650; letter-spacing: -.07em; line-height: .91; }
-.intro { max-width: 550px; margin: 26px 0 0; color: var(--muted-text); font-size: 1.05rem; line-height: 1.65; }
+h1 { font-weight: 650; letter-spacing: -.05em; line-height: 1.05; }
 
 .tracker-grid { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); gap: 18px; align-items: start; }
 .entry-panel, .expenses-panel { position: relative; border: 1px solid var(--line); background: linear-gradient(135deg, rgba(18, 23, 27, .97), rgba(13, 16, 19, .97)); box-shadow: inset 0 1px rgba(245, 245, 247, .035), 0 16px 40px rgba(0, 0, 0, .2); padding: 27px; }
@@ -79,12 +77,11 @@ button:disabled { cursor: wait; opacity: .65; }
 
 @media (max-width: 720px) {
   main { padding: 22px 20px 44px; }
-  .page-header { padding: 68px 0 42px; }
+  .tracker-intro { align-items: flex-start; flex-direction: column; gap: 6px; }
   .tracker-grid { grid-template-columns: 1fr; }
   .entry-panel, .expenses-panel { padding: 22px; }
 }
 
 @media (max-width: 420px) {
-  nav { align-items: flex-start; flex-direction: column; gap: 8px; }
   .expenses-heading { align-items: flex-start; flex-direction: column-reverse; }
 }

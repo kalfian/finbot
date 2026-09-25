@@ -22,9 +22,11 @@ try {
 
   const initialURL = page.url();
   const initialTotal = await page.locator(".total").innerText();
+  const defaultDate = await page.locator("#date").inputValue();
+  assert.match(defaultDate, /^\d{4}-\d{2}-\d{2}$/, "the date defaults to browser-local YYYY-MM-DD");
+  assert.equal(await page.locator("nav").count(), 0, "the focused tracker has no navigation chrome");
   await page.fill("#amount", "15000");
   await page.fill("#description", description);
-  await page.fill("#date", "2026-09-25");
   await page.getByRole("button", { name: "Add expense" }).click();
 
   await page.getByRole("status").filter({ hasText: "Expense added." }).waitFor();
@@ -38,6 +40,8 @@ try {
   console.log(JSON.stringify({
     url: page.url(),
     postStatuses: postResponses,
+    defaultDate,
+    navCount: 0,
     successMessage: "Expense added.",
     expense: description,
     total,

@@ -6,7 +6,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import ExpenseTracker from "../app/expense-tracker";
 import nextConfig from "../next.config";
-import { saveExpense, validateExpenseForm } from "../lib/expense-form";
+import { getBrowserLocalDate, saveExpense, validateExpenseForm } from "../lib/expense-form";
+
+test("the tracker is a focused expense page with a browser-local date default", () => {
+  const markup = renderToStaticMarkup(createElement(ExpenseTracker));
+  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(markup, /<nav\b/);
+  assert.doesNotMatch(source, /Every expense, in one place\./);
+  assert.match(source, /getBrowserLocalDate\(\)/);
+  assert.match(source, /setDate\(getBrowserLocalDate\(\)\)/);
+});
+
+test("getBrowserLocalDate creates a date-input value from local calendar values", () => {
+  const localDate = new Date(0);
+  localDate.setFullYear(2026, 1, 3);
+  assert.equal(getBrowserLocalDate(localDate), "2026-02-03");
+});
 
 test("the dev server permits the browser and workspace proxy to load client assets", () => {
   assert.deepEqual(nextConfig.allowedDevOrigins, ["127.0.0.1", "10.20.30.105"]);
