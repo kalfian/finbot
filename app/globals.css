@@ -1,0 +1,11 @@
+:root { --ink:#17231d; --muted:#647168; --paper:#f5f3ec; --panel:#fffefa; --line:#d9ddd2; --accent:#1c6b4a; }
+* { box-sizing:border-box; } html { scroll-behavior:smooth; }
+body { margin:0; color:var(--ink); background:var(--paper); font-family:Arial,Helvetica,sans-serif; }
+main { max-width:1120px; margin:0 auto; padding:28px 48px 60px; } nav { display:flex; align-items:center; justify-content:space-between; }
+.wordmark { color:var(--ink); font-family:Georgia,serif; font-size:1.55rem; font-weight:700; text-decoration:none; }.wordmark span { color:var(--accent); }
+.nav-label,.eyebrow,.number { color:var(--muted); font-size:.78rem; letter-spacing:.1em; text-transform:uppercase; }
+.hero { max-width:730px; padding:140px 0 120px; }.eyebrow { margin:0 0 20px; color:var(--accent); font-weight:700; }
+h1 { margin:0; font-family:Georgia,serif; font-size:clamp(3.6rem,8vw,6.9rem); font-weight:400; letter-spacing:-.065em; line-height:.92; }
+.intro { max-width:500px; margin:32px 0; color:var(--muted); font-size:1.15rem; line-height:1.6; }.status { display:inline-flex; align-items:center; gap:9px; border:1px solid var(--line); border-radius:99px; padding:10px 14px; background:var(--panel); color:var(--muted); font-size:.88rem; }.status-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+.highlights { display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid var(--line); }.highlight { min-height:190px; padding:28px 30px 8px 0; }.highlight + .highlight { border-left:1px solid var(--line); padding-left:30px; }.number { color:var(--accent); font-weight:700; }h2 { margin:38px 0 9px; font-family:Georgia,serif; font-size:1.42rem; font-weight:400; }.highlight p { margin:0; color:var(--muted); font-size:.94rem; line-height:1.55; }
+@media (max-width:640px) { main { padding:22px 24px 42px; }.hero { padding:100px 0 80px; }.highlights { grid-template-columns:1fr; }.highlight,.highlight + .highlight { min-height:auto; padding:25px 0; border-left:0; border-bottom:1px solid var(--line); }h2 { margin-top:22px; } }
