@@ -9,7 +9,7 @@ export function databasePath(): string {
 
   return isAbsolute(configuredPath)
     ? configuredPath
-    : resolve(process.cwd(), configuredPath);
+    : resolve(/* turbopackIgnore: true */ configuredPath);
 }
 
 export function openDatabase(): Database.Database {
@@ -20,13 +20,38 @@ export function openDatabase(): Database.Database {
 }
 
 export function initializeDatabase(database = openDatabase()): void {
+  const columns = database
+    .prepare("SELECT name FROM pragma_table_info('expenses')")
+    .all() as Array<{ name: string }>;
+
+  if (
+    columns.some((column) => column.name === "spent_on") &&
+    !columns.some((column) => column.name === "date")
+  ) {
+    database.transaction(() => {
+      database.exec("ALTER TABLE expenses RENAME TO expenses_legacy;");
+      createExpensesTable(database);
+      database.exec(`
+        INSERT INTO expenses (id, amount_cents, description, date, created_at)
+        SELECT id, amount_cents, description, spent_on, created_at
+        FROM expenses_legacy;
+        DROP TABLE expenses_legacy;
+      `);
+    })();
+    return;
+  }
+
+  createExpensesTable(database);
+}
+
+function createExpensesTable(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS expenses (
       id INTEGER PRIMARY KEY,
       amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
       description TEXT NOT NULL,
-      spent_on TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      date TEXT NOT NULL,
+      created_at TEXT NOT NULL
     );
   `);
 }
