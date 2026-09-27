@@ -1,8 +1,9 @@
 import { requireToken } from "@/lib/api-tokens";
 import { getDatabase } from "@/lib/db";
-import { getExpenses, postExpense } from "@/lib/expense-api";
+import { getExpenses, validateExpense } from "@/lib/expense-api";
 import { createExpenseRepository } from "@/lib/expenses";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
+import { budgetSnapshot } from "@/lib/budget";
 
 export const runtime = "nodejs";
 
@@ -23,5 +24,20 @@ export async function POST(request: Request): Promise<Response> {
   const database = getDatabase();
   const denied = requireToken(request, database);
   if (denied) return denied;
-  return postExpense(request, createExpenseRepository(database));
+  let body: unknown;
+  try { body = await request.json(); } catch { return Response.json({ error: "Request body must be valid JSON." }, { status: 400 }); }
+  const validation = validateExpense(body);
+  if ("error" in validation) return Response.json({ error: validation.error }, { status: 400 });
+  const sourceId = (body as Record<string, unknown>).sourceId;
+  if (sourceId !== undefined && (typeof sourceId !== "string" || !sourceId.trim() || sourceId.length > 200)) {
+    return Response.json({ error: "sourceId must contain 1-200 characters." }, { status: 400 });
+  }
+  try {
+    const { expense, replayed } = createExpenseRepository(database).record(validation.value, sourceId as string | undefined);
+    return Response.json({ expense, replayed, budget: budgetSnapshot(database, expense.date) },
+      { status: replayed ? 200 : 201, headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error && error.message.startsWith("sourceId") ? error.message : "We couldn't save this expense." },
+      { status: error instanceof Error && error.message.startsWith("sourceId") ? 409 : 500 });
+  }
 }

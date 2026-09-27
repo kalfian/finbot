@@ -46,7 +46,7 @@ export function validateExpense(value: unknown): ValidationResult {
   };
 }
 
-export function getExpenses(repository: ExpenseRepository): Response {
+export function getExpenses(repository: Pick<ExpenseRepository, "list">): Response {
   try {
     return Response.json({ expenses: repository.list() });
   } catch {
@@ -59,7 +59,7 @@ export function getExpenses(repository: ExpenseRepository): Response {
 
 export async function postExpense(
   request: Request,
-  repository: ExpenseRepository,
+  repository: Pick<ExpenseRepository, "create">,
 ): Promise<Response> {
   let body: unknown;
   try {

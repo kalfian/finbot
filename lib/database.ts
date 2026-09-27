@@ -39,6 +39,8 @@ export function initializeDatabase(database = openDatabase()): void {
       `);
     })();
     createTokensTable(database);
+    createBudgetTable(database);
+    createExpenseSources(database);
     return;
   }
 
@@ -47,6 +49,26 @@ export function initializeDatabase(database = openDatabase()): void {
     database.exec("ALTER TABLE expenses ADD COLUMN category TEXT NOT NULL DEFAULT 'Other';");
   }
   createTokensTable(database);
+  createBudgetTable(database);
+  createExpenseSources(database);
+}
+
+function createExpenseSources(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS expense_sources (
+      source_id TEXT PRIMARY KEY,
+      expense_id INTEGER NOT NULL REFERENCES expenses(id)
+    );
+  `);
+}
+
+function createBudgetTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS budget_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      monthly_limit_cents INTEGER NOT NULL CHECK (monthly_limit_cents > 0)
+    );
+  `);
 }
 
 function createTokensTable(database: Database.Database): void {

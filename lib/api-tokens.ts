@@ -43,11 +43,15 @@ export function requireToken(request: Request, database: Database.Database): Res
 }
 
 export function requireLocalOwner(request: Request): Response | null {
-  const host = new URL(request.url).hostname;
+  const requestUrl = new URL(request.url);
+  let localUrl: URL;
+  try { localUrl = new URL(`${requestUrl.protocol}//${request.headers.get("host") || requestUrl.host}`); }
+  catch { return Response.json({ error: "Local, same-origin access only." }, { status: 403 }); }
+  const host = localUrl.hostname;
   const origin = request.headers.get("origin");
   let sameOrigin = true;
   if (origin) {
-    try { sameOrigin = new URL(origin).origin === new URL(request.url).origin; }
+    try { sameOrigin = new URL(origin).origin === localUrl.origin; }
     catch { sameOrigin = false; }
   }
   if (!["localhost", "127.0.0.1", "[::1]"].includes(host)

@@ -24,6 +24,8 @@ The UI shows this month's spending and the all-time total, a searchable transact
 
 Full REST and MCP documentation is available at [http://localhost:3000/docs](http://localhost:3000/docs). Generate and revoke integration tokens on the [Integrations page](http://localhost:3000/integrations). The raw token appears only once and is stored hashed; never paste it into a URL or commit it.
 
+To implement a chat agent such as Hermes, follow [the agent integration guide](docs/hermes-agent.md). It includes text/photo examples, exact REST/MCP contracts, a sample reply, and retry/clarification rules. Set a recurring monthly limit on the Integrations page; the API returns day/month spending and remaining budget after each integration write. The app itself does not run a chat bot or parse images.
+
 To run the production build locally:
 
 ```bash
@@ -53,7 +55,7 @@ The project uses [better-sqlite3](https://github.com/WiseLibs/better-sqlite3), a
 
 ## Expense API
 
-The browser uses the legacy local `GET`/`POST /api/expenses` endpoint. Integrations use token-authenticated `GET`/`POST /api/v1/expenses` with `Authorization: Bearer <TOKEN>`. The versioned GET supports optional `q`, `from`, and `to` parameters, with inclusive Asia/Jakarta YYYY-MM-DD dates. Both endpoints use the same JSON shape and validation.
+The browser uses the legacy local `GET`/`POST /api/expenses` endpoint. Integrations use token-authenticated `GET`/`POST /api/v1/expenses` with `Authorization: Bearer <TOKEN>`. The versioned GET supports optional `q`, `from`, and `to` parameters, with inclusive Asia/Jakarta YYYY-MM-DD dates. Both endpoints accept the same expense fields and validation. The versioned POST additionally accepts optional `sourceId` and returns `expense`, `replayed`, and the post-write `budget` snapshot; identical retries are HTTP 200, new records HTTP 201, conflicting source IDs HTTP 409. `GET`/`PUT /api/v1/budget` and MCP budget tools provide the recurring monthly limit.
 
 `GET /api/expenses` returns expenses sorted by expense date newest first (with newest ID first when dates are equal):
 
@@ -87,7 +89,7 @@ Amounts are integer minor currency units (`1999` means IDR 19.99); they must be 
 
 ## Data model
 
-The `expenses` table stores `id`, `amount_cents`, `description`, `category`, `date`, and `created_at`. API responses expose the same values as `id`, `amountCents`, `description`, `category`, `date`, and `createdAt`. The database enforces non-null fields and a positive `amount_cents`; `created_at` is generated server-side as an ISO-8601 UTC timestamp. Older date-only rows remain readable.
+The `expenses` table stores `id`, `amount_cents`, `description`, `category`, `date`, and `created_at`. API responses expose the same values as `id`, `amountCents`, `description`, `category`, `date`, and `createdAt`. The database enforces non-null fields and a positive `amount_cents`; `created_at` is generated server-side as an ISO-8601 UTC timestamp. Older date-only rows remain readable. `budget_settings` stores one recurring monthly limit; `expense_sources` maps optional integration source IDs to existing expenses for safe retries.
 
 ## Security boundary
 

@@ -7,6 +7,7 @@ import { buildExpensePdf } from "./expense-report";
 import { filterReportExpenses, validateReportRange } from "./expense-filters";
 import { EXPENSE_CATEGORIES } from "./expense-form";
 import { validateExpense } from "./expense-api";
+import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
 
 export function createExpenseMcpServer(database: Database.Database): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
@@ -26,17 +27,39 @@ export function createExpenseMcpServer(database: Database.Database): McpServer {
   });
   server.registerTool("create_expense", {
     title: "Create expense",
-    description: "Record one expense. amountCents is a positive integer, date is an ISO UTC datetime.",
+    description: "Record one expense. amountCents is positive IDR minor units, date is ISO UTC; sourceId identifies a chat message for safe retries. Returns budget totals for that expense's Jakarta day and month.",
     inputSchema: {
       amountCents: z.number().int().positive().safe(),
       description: z.string().trim().min(1),
       category: z.enum(EXPENSE_CATEGORIES),
       date: z.string(),
+      sourceId: z.string().min(1).max(200).optional(),
     },
   }, async (expense) => {
     const validation = validateExpense(expense);
     if ("error" in validation) return { isError: true, ...result({ error: validation.error }) };
-    return result({ expense: repository.create(validation.value) });
+    try {
+      const { expense: created, replayed } = repository.record(validation.value, expense.sourceId);
+      return result({ expense: created, replayed, budget: budgetSnapshot(database, created.date) });
+    } catch (error) {
+      return { isError: true, ...result({ error: error instanceof Error ? error.message : "Expense could not be saved." }) };
+    }
+  });
+  server.registerTool("budget_status", {
+    title: "Budget status",
+    description: "Return Asia/Jakarta day and month spending, recurring monthly IDR limit, signed remaining amount, and exceeded status. Defaults to today.",
+    inputSchema: { date: z.string().default("") },
+  }, async ({ date }) => {
+    if (date && !validBudgetDate(date)) return { isError: true, ...result({ error: "date must be YYYY-MM-DD." }) };
+    return result(budgetSnapshot(database, date || new Date().toISOString()));
+  });
+  server.registerTool("set_monthly_limit", {
+    title: "Set monthly limit",
+    description: "Set one recurring monthly spending limit in positive integer IDR minor units; null clears it. Changes the limit, not expenses.",
+    inputSchema: { monthlyLimitCents: z.number().int().positive().safe().nullable() },
+  }, async ({ monthlyLimitCents }) => {
+    createBudgetRepository(database).setMonthlyLimitCents(monthlyLimitCents);
+    return result(budgetSnapshot(database));
   });
   server.registerTool("expense_summary", {
     title: "Expense summary",
