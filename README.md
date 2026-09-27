@@ -1,96 +1,78 @@
 # Expense Tracker
 
-Expense Tracker is a local-first Next.js expense tracker backed by SQLite.
+A local-first expense tracker for everyday spending. Record expenses in a focused web UI, search by description or category, filter by date, explore a calendar, and download a matching PDF. An external agent such as Hermes can use the token-authenticated REST API or MCP endpoint to turn a chat message into a recorded expense and a verified budget reply.
 
-The app records expenses with an amount, description, category, and date/time. It includes a light/dark theme, filtered PDF reports, token-authenticated REST API, and Streamable HTTP MCP.
+> Single-user and localhost-only. The web UI, legacy expense route, PDF export, and local token controls do **not** have account authentication. Do not expose this server to a public network.
 
-## Requirements
+## Preview
 
-- Node.js 20.9 or newer
-- npm
+These screenshots use **synthetic demo expenses** from September 2026; they are not real financial records.
 
-## Local setup
+![Desktop activity view in light mode showing monthly total, searchable expenses, and entry form](docs/screenshots/desktop-light.png)
+
+| OLED calendar and selected day | Integrations and monthly limit |
+| --- | --- |
+| ![Dark calendar with expenses grouped by day and selected-day details](docs/screenshots/calendar-dark.png) | ![Dark Integrations page with monthly limit, token controls, and API links](docs/screenshots/integrations-dark.png) |
+
+![Responsive mobile activity view with expenses and filters](docs/screenshots/mobile.png)
+
+## Run locally
+
+Requires Node.js 20.9+ and npm.
 
 ```bash
-npm install
-cp .env.example .env.local # optional; the default database path works without it
+npm ci
 npm run db:init
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Keep the app bound to localhost: its UI and legacy routes have no account login.
+Open <http://localhost:3000>. SQLite lives at `./data/financial-tracker.db` by default; set `DATABASE_PATH` to use another local file. Database files and local environment files are ignored by Git. To run the production build locally, use `npm run build` and `npm start`.
 
-The UI shows this month's spending and the all-time total, a searchable transaction list, and a calendar grouped by browser-local date. Search and optional dates jointly filter the list and downloaded PDF. Reports use Asia/Jakarta (UTC+7) calendar dates and IDR; the selected range includes both endpoints. The calendar remains independent. Theme preference persists in the browser.
+The app has six categories (`Food`, `Transport`, `Bills`, `Shopping`, `Health`, `Other`). List search and optional dates filter the downloaded PDF too. Report dates use inclusive Asia/Jakarta (UTC+7) days; the calendar groups records by the browser's local date. Set one recurring monthly IDR limit and manage one-time API tokens on [Integrations](http://localhost:3000/integrations).
 
-Full REST and MCP documentation is available at [http://localhost:3000/docs](http://localhost:3000/docs). Generate and revoke integration tokens on the [Integrations page](http://localhost:3000/integrations). The raw token appears only once and is stored hashed; never paste it into a URL or commit it.
+## Connect an LLM agent
 
-To implement a chat agent such as Hermes, follow [the agent integration guide](docs/hermes-agent.md). It includes text/photo examples, exact REST/MCP contracts, a sample reply, and retry/clarification rules. Set a recurring monthly limit on the Integrations page; the API returns day/month spending and remaining budget after each integration write. The app itself does not run a chat bot or parse images.
+Expense Tracker is the **system of record**, not a chat bot or OCR service. The agent owns message intake, interpretation, authorized-user checks, optional photo understanding, and replies. It must write through the API/MCP and use returned numbers—not generate totals itself.
 
-To run the production build locally:
+For a message `Seblak 10.000`, a successful agent extracts `Seblak` / `Food` / IDR 10,000, sends `amountCents: 1000000`, and uses the message timestamp converted to ISO UTC. It sends a stable `sourceId` for retries, then formats the returned expense ID and budget snapshot as a chat reply. If the amount or receipt total is unclear, it asks before writing.
 
-```bash
-npm run build
-npm start
+```text
+Chat message → authorized agent → POST /api/v1/expenses or MCP create_expense
+                                      ↓
+                    { expense, replayed, budget }
+                                      ↓
+                    Agent formats the confirmed reply
 ```
 
-To run the complete test suite:
+Start here:
+
+1. Set a monthly limit on [Integrations](http://localhost:3000/integrations), if wanted. No limit is configured by default.
+2. Generate an integration token there and store it in the agent's secret store. Send `Authorization: Bearer <TOKEN>` to `/api/v1/*` or `/mcp`; never put the token in a URL, prompt, screenshot, log, or commit.
+3. Give the agent [the Hermes implementation guide](docs/hermes-agent.md). It contains the message/photo decision flow, example request/response, reference reply code, category mapping, clarification rules, idempotent retries, and security boundaries.
+4. Restrict the chat adapter to authorized senders. Run it on the same device or through a private authenticated connection; the current web app is not safe to expose publicly.
+
+### Agent contract at a glance
+
+| Capability | REST | MCP |
+| --- | --- | --- |
+| Record and get post-write budget snapshot | `POST /api/v1/expenses` | `create_expense` |
+| Search and list | `GET /api/v1/expenses?q=&from=&to=` | `list_expenses` |
+| Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
+| Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
+| Category summary and PDF tool | — | `expense_summary`, `export_report_pdf` |
+
+The REST create body requires positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Optional `sourceId` identifies the incoming chat message. A first write returns HTTP 201; an identical retry returns HTTP 200 with `replayed: true`; reusing an ID for different fields returns HTTP 409. `budget` includes Jakarta `date`/`month`, `todayCents`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`. An unset limit returns `null` for the limit and remaining amount; exceeding a limit informs the user but never blocks recording.
+
+The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by the same Bearer token. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The legacy `/api/expenses` and `/api/reports/pdf` serve the local browser and are **not** token-protected integration endpoints.
+
+## Development
 
 ```bash
 npm test
+npm run lint
+npm run build
 ```
 
-## Commands
+The app uses Next.js, React, and SQLite via `better-sqlite3`. `npm run db:init` initializes or migrates the local schema without erasing existing expenses. Older date-only records remain readable. `budget_settings` holds the recurring limit; `expense_sources` maps chat source IDs to recorded expenses. Tests use isolated in-memory databases. If you switch Node versions after installing dependencies, reinstall or rebuild the native SQLite module for that runtime.
 
-- `npm run dev` — run the development server
-- `npm run lint` — check the source with ESLint
-- `npm run build` — create the production build
-- `npm run db:init` — create the local SQLite file and initialize its schema
-- `npm test` — run repository and API tests against isolated in-memory databases
-
-## SQLite choice
-
-The project uses [better-sqlite3](https://github.com/WiseLibs/better-sqlite3), a synchronous native SQLite driver suited to a small local app that needs neither credentials nor an external service. `lib/database.ts` contains the shared SQLite implementation used by CLI initialization and opens `DATABASE_PATH`, defaulting to `./data/financial-tracker.db`. `lib/db.ts` is the Next.js server-only wrapper that re-exports it. Next.js externalizes the native module from server bundling, and database files are ignored by Git.
-
-`npm run db:init` uses the shared implementation and creates the initial `expenses` table.
-
-## Expense API
-
-The browser uses the legacy local `GET`/`POST /api/expenses` endpoint. Integrations use token-authenticated `GET`/`POST /api/v1/expenses` with `Authorization: Bearer <TOKEN>`. The versioned GET supports optional `q`, `from`, and `to` parameters, with inclusive Asia/Jakarta YYYY-MM-DD dates. Both endpoints accept the same expense fields and validation. The versioned POST additionally accepts optional `sourceId` and returns `expense`, `replayed`, and the post-write `budget` snapshot; identical retries are HTTP 200, new records HTTP 201, conflicting source IDs HTTP 409. `GET`/`PUT /api/v1/budget` and MCP budget tools provide the recurring monthly limit.
-
-`GET /api/expenses` returns expenses sorted by expense date newest first (with newest ID first when dates are equal):
-
-```json
-{
-  "expenses": [
-    {
-      "id": 1,
-      "amountCents": 1999,
-      "description": "Lunch",
-      "category": "Food",
-      "date": "2026-02-14T12:34:00.000Z",
-      "createdAt": "2026-02-14T12:34:56.789Z"
-    }
-  ]
-}
-```
-
-`POST /api/expenses` accepts this JSON request body and returns `201 Created` with the created record in `{ "expense": ... }`:
-
-```json
-{
-  "amountCents": 1999,
-  "description": "Lunch",
-  "category": "Food",
-  "date": "2026-02-14T12:34:00.000Z"
-}
-```
-
-Amounts are integer minor currency units (`1999` means IDR 19.99); they must be positive. `description` must be non-blank, `category` must be one of Food, Transport, Bills, Shopping, Health, or Other, and `date` must be an ISO UTC datetime. The browser form converts local date/time to UTC before saving. Invalid or malformed request bodies receive a JSON `{ "error": "..." }` response with status `400`.
-
-## Data model
-
-The `expenses` table stores `id`, `amount_cents`, `description`, `category`, `date`, and `created_at`. API responses expose the same values as `id`, `amountCents`, `description`, `category`, `date`, and `createdAt`. The database enforces non-null fields and a positive `amount_cents`; `created_at` is generated server-side as an ISO-8601 UTC timestamp. Older date-only rows remain readable. `budget_settings` stores one recurring monthly limit; `expense_sources` maps optional integration source IDs to existing expenses for safe retries.
-
-## Security boundary
-
-This is a single-user local application. The UI, legacy `/api/expenses`, PDF download, and local token-management endpoints have no user authentication. Tokens protect `/api/v1/expenses` and `/mcp` only. Do not expose the app beyond localhost without adding full app authentication and HTTPS.
+No API token is required to use the local web UI. API tokens only protect the versioned REST endpoints and MCP; they do not turn this into a multi-user hosted service.
