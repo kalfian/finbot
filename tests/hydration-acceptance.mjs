@@ -22,7 +22,7 @@ try {
   await expectTextToDisappear(page, "Loading expenses…");
 
   const initialURL = page.url();
-  const initialTotal = await page.locator(".total").innerText();
+  const initialTotal = await page.locator(".lifetime-amount").innerText();
   const defaultDate = await page.locator("#date").inputValue();
   assert.match(defaultDate, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "the datetime defaults to browser-local YYYY-MM-DDTHH:mm");
   assert.equal(defaultDate, await browserLocalDateTime(page), "the default comes from the browser's realtime local clock");
@@ -31,12 +31,12 @@ try {
   await page.fill("#description", description);
   await page.selectOption("#category", "Transport");
   await page.fill("#date", expenseDateTime);
-  await page.getByRole("button", { name: "Add expense" }).click();
+  await page.locator(".entry-panel").getByRole("button", { name: "Add expense" }).click();
 
   await page.getByRole("status").filter({ hasText: "Expense added." }).waitFor();
   await page.getByText(description, { exact: true }).waitFor();
 
-  const total = await page.locator(".total").innerText();
+  const total = await page.locator(".lifetime-amount").innerText();
   const addedExpense = page.locator(".expense-list li").filter({
     has: page.getByText(description, { exact: true }),
   });
@@ -55,12 +55,25 @@ try {
   assert.equal(await addedExpense.count(), 1, "the category search keeps the matching expense visible");
   assert.equal(await addedExpense.getByText("Transport", { exact: true }).count(), 1, "search filters already-loaded expenses by visible category text");
   await page.fill("#expense-search", "no matching expense");
-  await page.getByText("No expenses match your search.", { exact: true }).waitFor();
+  await page.getByText("No expenses match your filters.", { exact: true }).waitFor();
   const clearSearch = page.getByRole("button", { name: "Clear search" });
   assert.equal(await clearSearch.count(), 1, "an active search has an accessible clear control");
   await clearSearch.click();
   assert.equal(await page.locator("#expense-search").inputValue(), "", "clear search removes the active query");
+  await page.fill("#report-start", "2026-02-14");
+  await page.fill("#report-end", "2026-02-14");
+  assert.equal(await addedExpense.count(), 1, "inclusive date filters match the listed expense");
+  await page.fill("#report-end", "2026-02-13");
+  assert.equal(await page.getByRole("button", { name: "Download PDF" }).isDisabled(), true);
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  assert.equal(await page.locator("#report-start").inputValue(), "");
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+  await page.reload();
+  await expectTextToDisappear(page, "Loading expenses…");
+  assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
 
+  await page.getByRole("tab", { name: "Calendar" }).click();
   const browserMonth = await page.evaluate(() => {
     const now = new Date();
     return now.getFullYear() * 12 + now.getMonth();
@@ -71,11 +84,11 @@ try {
     await page.getByRole("button", { name: monthButton }).click();
   }
   const selectedExpenseDay = page.getByRole("button", {
-    name: new RegExp(`^Select ${escapeRegExp(expenseDayKey)}, \\d+ expenses?$`),
+    name: new RegExp(`^Select ${escapeRegExp(expenseDayKey)}, \\d+ expenses?,`),
   });
   await selectedExpenseDay.click();
   const selectedDay = page.locator(".selected-day");
-  await selectedDay.getByRole("heading", { name: `Expenses on ${expenseDayKey}` }).waitFor();
+  await selectedDay.getByRole("heading", { name: new RegExp("^Expenses on ") }).waitFor();
   const selectedDayExpense = selectedDay.locator("li").filter({ hasText: description });
   assert.equal(await selectedDayExpense.count(), 1, "selected calendar day shows the matching expense in its day details");
   assert.equal(await selectedDayExpense.getByText("Transport", { exact: true }).count(), 1, "selected calendar day expense row shows the saved category");

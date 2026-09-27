@@ -13,8 +13,23 @@ function datePart(value: number): string {
 
 /** Returns the browser-local calendar date for an expense instant or calendar cell. */
 export function getLocalDateKey(dateTime: string | Date): string {
+  if (typeof dateTime === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateTime)) return dateTime;
   const date = dateTime instanceof Date ? dateTime : new Date(dateTime);
   return `${date.getFullYear()}-${datePart(date.getMonth() + 1)}-${datePart(date.getDate())}`;
+}
+
+export function summarizeLocalMonth<T extends Pick<CalendarExpense, "date" | "amountCents">>(
+  expenses: readonly T[],
+  month: Date,
+): { count: number; totalCents: number } {
+  const monthKey = getLocalDateKey(month).slice(0, 7);
+  return expenses.reduce((summary, expense) => {
+    if (getLocalDateKey(expense.date).startsWith(monthKey)) {
+      summary.count += 1;
+      summary.totalCents += expense.amountCents;
+    }
+    return summary;
+  }, { count: 0, totalCents: 0 });
 }
 
 export function filterExpenses<T extends Pick<CalendarExpense, "description" | "category">>(

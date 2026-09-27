@@ -6,6 +6,7 @@ import {
   filterExpenses,
   getLocalDateKey,
   groupExpensesByLocalDate,
+  summarizeLocalMonth,
 } from "../lib/expense-calendar";
 
 const expenses = [
@@ -28,6 +29,17 @@ test("groups ISO datetime expenses using browser-local Date values instead of UT
 
   assert.equal(getLocalDateKey(instant), expectedKey);
   assert.deepEqual(groupExpensesByLocalDate([{ ...expenses[0], date: instant }]).get(expectedKey)?.map(({ id }) => id), [1]);
+  assert.equal(getLocalDateKey("2026-02-14"), "2026-02-14");
+});
+
+test("summarizes a month by browser-local expense date, including legacy dates", () => {
+  const month = new Date(2026, 1, 1);
+  const records = [
+    ...expenses,
+    { ...expenses[0], id: 4, amountCents: 100, date: "2026-02-28" },
+    { ...expenses[0], id: 5, amountCents: 900, date: "2026-03-01" },
+  ];
+  assert.deepEqual(summarizeLocalMonth(records, month), { count: 4, totalCents: 1500100 });
 });
 
 test("builds a complete Sunday-first month matrix and groups matching day expenses", () => {
