@@ -38,6 +38,7 @@ export function initializeDatabase(database = openDatabase()): void {
         DROP TABLE expenses_legacy;
       `);
     })();
+    createTokensTable(database);
     return;
   }
 
@@ -45,6 +46,18 @@ export function initializeDatabase(database = openDatabase()): void {
   if (columns.length > 0 && !columns.some((column) => column.name === "category")) {
     database.exec("ALTER TABLE expenses ADD COLUMN category TEXT NOT NULL DEFAULT 'Other';");
   }
+  createTokensTable(database);
+}
+
+function createTokensTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      id INTEGER PRIMARY KEY,
+      label TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+  `);
 }
 
 function createExpensesTable(database: Database.Database): void {

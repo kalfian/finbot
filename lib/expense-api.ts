@@ -5,7 +5,7 @@ type ValidationResult =
   | { value: NewExpense }
   | { error: string };
 
-function isUtcDateTime(value: string): boolean {
+export function isUtcDateTime(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
     return false;
   }
@@ -13,7 +13,7 @@ function isUtcDateTime(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
-function validateExpense(value: unknown): ValidationResult {
+export function validateExpense(value: unknown): ValidationResult {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { error: "Request body must be a JSON object." };
   }
