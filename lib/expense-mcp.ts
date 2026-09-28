@@ -8,8 +8,9 @@ import { filterReportExpenses, validateReportRange } from "./expense-filters";
 import { EXPENSE_CATEGORIES } from "./expense-form";
 import { validateExpense } from "./expense-api";
 import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
+import { listProofs, ProofError, readProof, saveProof } from "./expense-proofs";
 
-export function createExpenseMcpServer(database: Database.Database): McpServer {
+export function createExpenseMcpServer(database: Database.Database, proofDirectory?: string): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
   const repository = createExpenseRepository(database);
   const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
@@ -43,6 +44,50 @@ export function createExpenseMcpServer(database: Database.Database): McpServer {
       return result({ expense: created, replayed, budget: budgetSnapshot(database, created.date) });
     } catch (error) {
       return { isError: true, ...result({ error: error instanceof Error ? error.message : "Expense could not be saved." }) };
+    }
+  });
+  server.registerTool("list_expense_proofs", {
+    title: "List expense proofs",
+    description: "List receipt/photo metadata attached to an expense.",
+    inputSchema: { expenseId: z.number().int().positive().safe() },
+  }, async ({ expenseId }) => {
+    try { return result({ proofs: listProofs(database, expenseId) }); }
+    catch (error) { return { isError: true, ...result({ error: error instanceof Error ? error.message : "Proofs unavailable." }) }; }
+  });
+  server.registerTool("attach_expense_proof", {
+    title: "Attach expense proof",
+    description: "Save a JPEG, PNG, WebP, or PDF proof to an existing expense. 5 MB maximum, 3 proofs per expense. Use a stable sourceId for safe retries.",
+    inputSchema: {
+      expenseId: z.number().int().positive().safe(),
+      filename: z.string().min(1).max(120),
+      mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]),
+      base64: z.string().max(7_000_000),
+      sourceId: z.string().min(1).max(200).optional(),
+    },
+  }, async ({ expenseId, filename, mimeType, base64, sourceId }) => {
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
+      return { isError: true, ...result({ error: "base64 must be valid encoded file bytes." }) };
+    }
+    try {
+      const file = new File([Buffer.from(base64, "base64")], filename, { type: mimeType });
+      const saved = await saveProof(database, expenseId, file, proofDirectory, sourceId);
+      return result(saved);
+    } catch (error) {
+      return { isError: true, ...result({ error: error instanceof ProofError ? error.message : "Proof could not be saved." }) };
+    }
+  });
+  server.registerTool("get_expense_proof", {
+    title: "Read expense proof",
+    description: "Return the attached proof as a base64 embedded resource.",
+    inputSchema: { expenseId: z.number().int().positive().safe(), proofId: z.string().uuid() },
+  }, async ({ expenseId, proofId }) => {
+    try {
+      const { proof, bytes } = readProof(database, expenseId, proofId, proofDirectory);
+      return { content: [{ type: "resource", resource: {
+        uri: `expense-tracker://expenses/${expenseId}/proofs/${proof.id}`, mimeType: proof.mimeType, blob: Buffer.from(bytes).toString("base64"),
+      } }] };
+    } catch (error) {
+      return { isError: true, ...result({ error: error instanceof ProofError ? error.message : "Proof could not be read." }) };
     }
   });
   server.registerTool("budget_status", {
@@ -99,9 +144,9 @@ export function createExpenseMcpServer(database: Database.Database): McpServer {
   return server;
 }
 
-export async function handleExpenseMcp(request: Request, database: Database.Database): Promise<Response> {
+export async function handleExpenseMcp(request: Request, database: Database.Database, proofDirectory?: string): Promise<Response> {
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
-  const server = createExpenseMcpServer(database);
+  const server = createExpenseMcpServer(database, proofDirectory);
   await server.connect(transport);
   try {
     return await transport.handleRequest(request);

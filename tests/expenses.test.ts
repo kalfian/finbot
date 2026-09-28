@@ -89,6 +89,7 @@ test("database migration gives existing expenses the backwards-compatible Other 
       category: "Other",
       date: "2026-02-14",
       createdAt: "2026-02-14T08:30:00.000Z",
+      proofCount: 0,
     }]);
   } finally {
     database.close();
@@ -122,6 +123,7 @@ test("POST creates an expense and GET returns the JSON list", async () => {
         category: "Food",
         date: "2026-02-14T08:30:00.000Z",
         createdAt: created.expense.createdAt,
+        proofCount: 0,
       },
     });
     assert.match(created.expense.createdAt, /^\d{4}-\d{2}-\d{2}T/);

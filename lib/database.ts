@@ -41,6 +41,7 @@ export function initializeDatabase(database = openDatabase()): void {
     createTokensTable(database);
     createBudgetTable(database);
     createExpenseSources(database);
+    createProofsTable(database);
     return;
   }
 
@@ -51,6 +52,24 @@ export function initializeDatabase(database = openDatabase()): void {
   createTokensTable(database);
   createBudgetTable(database);
   createExpenseSources(database);
+  createProofsTable(database);
+}
+
+function createProofsTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS expense_proofs (
+      id TEXT PRIMARY KEY,
+      expense_id INTEGER NOT NULL REFERENCES expenses(id),
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      source_id TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (expense_id, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS expense_proofs_expense_id ON expense_proofs(expense_id);
+  `);
 }
 
 function createExpenseSources(database: Database.Database): void {

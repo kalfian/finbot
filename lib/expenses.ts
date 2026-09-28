@@ -7,9 +7,10 @@ export type Expense = {
   category: string;
   date: string;
   createdAt: string;
+  proofCount: number;
 };
 
-export type NewExpense = Omit<Expense, "id" | "createdAt">;
+export type NewExpense = Omit<Expense, "id" | "createdAt" | "proofCount">;
 
 type ExpenseRow = {
   id: number;
@@ -18,6 +19,7 @@ type ExpenseRow = {
   category: string;
   date: string;
   created_at: string;
+  proof_count: number;
 };
 
 function toExpense(row: ExpenseRow): Expense {
@@ -28,6 +30,7 @@ function toExpense(row: ExpenseRow): Expense {
     category: row.category || "Other",
     date: row.date,
     createdAt: row.created_at,
+    proofCount: row.proof_count,
   };
 }
 
@@ -45,9 +48,9 @@ export function createExpenseRepository(
     INSERT INTO expenses (amount_cents, description, category, date, created_at)
     VALUES (@amountCents, @description, @category, @date, @createdAt)
   `);
-  const findById = database.prepare("SELECT * FROM expenses WHERE id = ?");
+  const findById = database.prepare("SELECT expenses.*, (SELECT COUNT(*) FROM expense_proofs WHERE expense_id = expenses.id) AS proof_count FROM expenses WHERE id = ?");
   const list = database.prepare(
-    "SELECT * FROM expenses ORDER BY date DESC, id DESC",
+    "SELECT expenses.*, (SELECT COUNT(*) FROM expense_proofs WHERE expense_id = expenses.id) AS proof_count FROM expenses ORDER BY date DESC, id DESC",
   );
   const source = database.prepare("SELECT expense_id FROM expense_sources WHERE source_id = ?");
   const insertSource = database.prepare("INSERT INTO expense_sources (source_id, expense_id) VALUES (?, ?)");

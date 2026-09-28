@@ -2,6 +2,8 @@
 
 A local-first expense tracker for everyday spending. Record expenses in a focused web UI, search by description or category, filter by date, explore a calendar, and download a matching PDF. An external agent such as Hermes can use the token-authenticated REST API or MCP endpoint to turn a chat message into a recorded expense and a verified budget reply.
 
+Attach receipt photos or PDFs as proof to new or existing expenses. Up to three files per expense, 5 MiB each; files stay on this machine.
+
 > Single-user and localhost-only. The web UI, legacy expense route, PDF export, and local token controls do **not** have account authentication. Do not expose this server to a public network.
 
 ## Preview
@@ -26,7 +28,7 @@ npm run db:init
 npm run dev
 ```
 
-Open <http://localhost:3000>. SQLite lives at `./data/financial-tracker.db` by default; set `DATABASE_PATH` to use another local file. Database files and local environment files are ignored by Git. To run the production build locally, use `npm run build` and `npm start`.
+Open <http://localhost:3000>. SQLite lives at `./data/financial-tracker.db` by default; set `DATABASE_PATH` to use another local file. Proof files live in `proofs/` beside the database; back up both together. Database files, proof files, and local environment files are ignored by Git. To run the production build locally, use `npm run build` and `npm start`.
 
 The app has six categories (`Food`, `Transport`, `Bills`, `Shopping`, `Health`, `Other`). List search and optional dates filter the downloaded PDF too. Report dates use inclusive Asia/Jakarta (UTC+7) days; the calendar groups records by the browser's local date. Set one recurring monthly IDR limit and manage one-time API tokens on [Integrations](http://localhost:3000/integrations).
 
@@ -56,12 +58,15 @@ Start here:
 | Capability | REST | MCP |
 | --- | --- | --- |
 | Record and get post-write budget snapshot | `POST /api/v1/expenses` | `create_expense` |
+| Attach, list, and read receipt proof | `/api/v1/expenses/:id/proofs` | `attach_expense_proof`, `list_expense_proofs`, `get_expense_proof` |
 | Search and list | `GET /api/v1/expenses?q=&from=&to=` | `list_expenses` |
 | Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
 | Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
 | Category summary and PDF tool | — | `expense_summary`, `export_report_pdf` |
 
 The REST create body requires positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Optional `sourceId` identifies the incoming chat message. A first write returns HTTP 201; an identical retry returns HTTP 200 with `replayed: true`; reusing an ID for different fields returns HTTP 409. `budget` includes Jakarta `date`/`month`, `todayCents`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`. An unset limit returns `null` for the limit and remaining amount; exceeding a limit informs the user but never blocks recording.
+
+For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. Pass a stable proof `sourceId` for safe retries. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 
 The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by the same Bearer token. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The legacy `/api/expenses` and `/api/reports/pdf` serve the local browser and are **not** token-protected integration endpoints.
 

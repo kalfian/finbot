@@ -77,7 +77,7 @@ type FetchImplementation = typeof fetch;
 export async function saveExpense(
   expense: NewExpenseRequest,
   fetchImplementation: FetchImplementation = fetch,
-): Promise<void> {
+): Promise<number> {
   const response = await fetchImplementation("/api/expenses", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -90,15 +90,30 @@ export async function saveExpense(
     if (!response.ok) {
       throw new Error("We couldn't save this expense. Please try again.");
     }
-    return;
+    throw new Error("Expense response was incomplete.");
   }
 
   if (response.ok) {
-    return;
+    if (body && typeof body === "object" && "expense" in body && body.expense
+      && typeof body.expense === "object" && "id" in body.expense && typeof body.expense.id === "number") {
+      return body.expense.id;
+    }
+    throw new Error("Expense response was incomplete.");
   }
 
   const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
     ? body.error
     : "We couldn't save this expense. Please try again.";
   throw new Error(message);
+}
+
+export async function uploadProof(expenseId: number, file: File, sourceId: string, fetchImplementation: FetchImplementation = fetch): Promise<void> {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("sourceId", sourceId);
+  const response = await fetchImplementation(`/api/expenses/${expenseId}/proofs`, { method: "POST", body: form });
+  if (response.ok) return;
+  const body: unknown = await response.json().catch(() => null);
+  throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
+    ? body.error : "Proof could not be uploaded.");
 }
