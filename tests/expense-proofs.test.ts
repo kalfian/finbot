@@ -6,7 +6,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { initializeDatabase } from "../lib/database";
 import { createExpenseRepository } from "../lib/expenses";
-import { listProofs, ProofError, readProof, saveProof } from "../lib/expense-proofs";
+import { deleteProofFiles, listProofs, ProofError, readProof, saveProof } from "../lib/expense-proofs";
 import { getProofFile, getProofList, postProof } from "../lib/proof-api";
 import { createUserRepository } from "../lib/auth";
 
@@ -82,6 +82,24 @@ test("proof metadata, uploads, and file bytes cannot cross user boundaries", asy
     assert.throws(() => readProof(database, user.id, expense.id, saved.proof.id, directory), (error: unknown) => error instanceof ProofError && error.status === 404);
     await assert.rejects(saveProof(database, user.id, expense.id, file, directory, "private-source"),
       (error: unknown) => error instanceof ProofError && error.status === 404);
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("deleted proof references remove their private files", async () => {
+  const database = new Database(":memory:");
+  const directory = mkdtempSync(join(tmpdir(), "deleted-proofs-"));
+  try {
+    initializeDatabase(database);
+    const repository = createExpenseRepository(database, 1);
+    const expense = repository.create({ amountCents: 100, description: "Delete", category: "Other", date: "2026-09-28T05:00:00.000Z" });
+    await saveProof(database, 1, expense.id, new File([png], "delete.png", { type: "image/png" }), directory);
+    const deleted = repository.delete(expense.id);
+    assert.ok(deleted);
+    deleteProofFiles(deleted.proofs, directory);
+    assert.deepEqual(readdirSync(directory), []);
   } finally {
     database.close();
     rmSync(directory, { recursive: true, force: true });

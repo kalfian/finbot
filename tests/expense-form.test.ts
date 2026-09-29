@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import ExpenseTracker from "../app/expense-tracker";
 import nextConfig from "../next.config";
-import { amountCentsToInput, getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, updateExpense, validateExpenseForm } from "../lib/expense-form";
+import { amountCentsToInput, deleteExpense, getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, updateExpense, validateExpenseForm } from "../lib/expense-form";
 
 test("the tracker is a focused expense page with a browser-local datetime default", () => {
   const markup = renderToStaticMarkup(createElement(ExpenseTracker, { user: { username: "tester", role: "user" } }));
@@ -137,6 +137,20 @@ test("updateExpense patches the selected expense and handles API errors", async 
   await assert.rejects(updateExpense(7, expense, failingFetch), { message: "Expense not found." });
 });
 
+test("deleteExpense removes the selected expense and handles API errors", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const successfulFetch: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ deleted: true }), { status: 200 });
+  };
+  await deleteExpense(7, successfulFetch);
+  assert.equal(calls[0].input, "/api/expenses/7");
+  assert.equal(calls[0].init?.method, "DELETE");
+
+  const failingFetch: typeof fetch = async () => new Response(JSON.stringify({ error: "Expense not found." }), { status: 404 });
+  await assert.rejects(deleteExpense(7, failingFetch), { message: "Expense not found." });
+});
+
 test("the tracker exposes edit actions and an explicit edit mode", () => {
   const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
 
@@ -144,5 +158,7 @@ test("the tracker exposes edit actions and an explicit edit mode", () => {
   assert.match(source, /Edit expense/);
   assert.match(source, /Save changes/);
   assert.match(source, /Cancel editing/);
+  assert.match(source, /aria-label=\{`Delete \$\{expense\.description\}`\}/);
+  assert.match(source, /window\.confirm/);
   assert.match(source, /onClick=\{startAdding\}/);
 });

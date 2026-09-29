@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { ProofFile } from "./expense-proofs";
 
 export type Expense = {
   id: number;
@@ -38,6 +39,7 @@ export type ExpenseRepository = {
   create(expense: NewExpense): Expense;
   record(expense: NewExpense, sourceId?: string): { expense: Expense; replayed: boolean };
   update(id: number, expense: NewExpense): Expense | null;
+  delete(id: number): { expense: Expense; proofs: ProofFile[] } | null;
   list(): Expense[];
 };
 
@@ -61,6 +63,10 @@ export function createExpenseRepository(
   );
   const source = database.prepare("SELECT expense_id FROM expense_sources WHERE user_id = ? AND source_id = ?");
   const insertSource = database.prepare("INSERT INTO expense_sources (user_id, source_id, expense_id) VALUES (?, ?, ?)");
+  const proofFiles = database.prepare("SELECT id, mime_type FROM expense_proofs WHERE expense_id = ?");
+  const deleteProofs = database.prepare("DELETE FROM expense_proofs WHERE expense_id = ?");
+  const deleteSources = database.prepare("DELETE FROM expense_sources WHERE user_id = ? AND expense_id = ?");
+  const deleteExpense = database.prepare("DELETE FROM expenses WHERE id = ? AND user_id = ?");
 
   function create(expense: NewExpense): Expense {
     const createdAt = new Date().toISOString();
@@ -96,6 +102,18 @@ export function createExpenseRepository(
       const result = update.run({ id, userId, ...expense });
       if (!result.changes) return null;
       return toExpense(findById.get(id, userId) as ExpenseRow);
+    },
+    delete(id) {
+      return database.transaction(() => {
+        const row = findById.get(id, userId) as ExpenseRow | undefined;
+        if (!row) return null;
+        const proofs = (proofFiles.all(id) as Array<{ id: string; mime_type: string }>)
+          .map((proof) => ({ id: proof.id, mimeType: proof.mime_type }));
+        deleteSources.run(userId, id);
+        deleteProofs.run(id);
+        deleteExpense.run(id, userId);
+        return { expense: toExpense(row), proofs };
+      })();
     },
     list() {
       return (list.all(userId) as ExpenseRow[]).map(toExpense);

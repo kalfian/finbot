@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Paperclip, Pencil, Plus, Search, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Paperclip, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import ThemeToggle from "./theme-toggle";
 import ProofControls from "./proof-controls";
 import { formatExpenseDate } from "@/lib/date-time";
@@ -15,7 +15,7 @@ import {
   summarizeLocalMonth,
   type CalendarExpense,
 } from "@/lib/expense-calendar";
-import { amountCentsToInput, EXPENSE_CATEGORIES, getBrowserLocalDateTime, saveExpense, updateExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
+import { amountCentsToInput, deleteExpense, EXPENSE_CATEGORIES, getBrowserLocalDateTime, saveExpense, updateExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
 import { MAX_PROOFS, MAX_PROOF_BYTES } from "@/lib/proof-types";
 import { calculateTotal, formatCurrency } from "@/lib/money";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
@@ -42,7 +42,10 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   const [formError, setFormError] = useState("");
   const [invalidField, setInvalidField] = useState<FieldName | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
+  const [activityMessage, setActivityMessage] = useState("");
+  const [activityError, setActivityError] = useState("");
   const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
+  const [deletingExpenseId, setDeletingExpenseId] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Food");
@@ -227,6 +230,24 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     amountRef.current?.focus({ preventScroll: true });
   }
 
+  async function handleDelete(expense: Expense) {
+    if (!window.confirm(`Delete "${expense.description}"? Its proof files will also be permanently deleted.`)) return;
+    setDeletingExpenseId(expense.id);
+    setActivityError("");
+    setActivityMessage("");
+    try {
+      await deleteExpense(expense.id);
+      setExpenses((current) => current.filter((item) => item.id !== expense.id));
+      if (editingExpenseId === expense.id) handleReset();
+      if (pendingProofs?.expenseId === expense.id) setPendingProofs(null);
+      setActivityMessage("Expense deleted.");
+    } catch (error) {
+      setActivityError(error instanceof Error ? error.message : "We couldn't delete this expense. Please try again.");
+    } finally {
+      setDeletingExpenseId(null);
+    }
+  }
+
   function moveCalendarMonth(offset: number) {
     setCalendarMonth((month) => shiftLocalMonth(month, offset));
     setSelectedDayKey(null);
@@ -316,6 +337,8 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
           {!validRange && <p className="report-note error" role="alert">Choose valid dates, with the end on or after the start.</p>}
           {(searchQuery || reportStart || reportEnd) && <button className="inline-button" type="button" onClick={() => { setSearchQuery(""); setReportStart(""); setReportEnd(""); }}>Clear filters</button>}
         </div>}
+        {activityError && <p className="activity-message error" role="alert">{activityError}</p>}
+        {activityMessage && <p className="activity-message success" role="status">{activityMessage}</p>}
         {isLoading ? <p className="state" role="status">Loading expenses…</p>
           : loadError ? <div className="state error" role="alert"><p>{loadError}</p><button className="inline-button" type="button" onClick={() => void loadExpenses()}>Try again</button></div>
             : <>
@@ -326,7 +349,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
                     ? <div className="empty-state"><p>No expenses match your filters.</p><button className="inline-button" type="button" onClick={() => { setSearchQuery(""); setReportStart(""); setReportEnd(""); }}>Clear filters</button></div>
                     : <ul className="expense-list">{filteredExpenses.map((expense) => <li className={editingExpenseId === expense.id ? "is-editing" : undefined} key={expense.id}>
                       <div className="expense-main"><p className="expense-description">{expense.description}</p><div className="expense-meta"><span>{expense.category}</span><time dateTime={expense.date}>{formatExpenseDate(expense.date)}</time></div><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></div>
-                      <div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button></div>
+                      <div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><div className="expense-actions"><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} disabled={deletingExpenseId === expense.id} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button><button className="delete-expense-button" type="button" onClick={() => void handleDelete(expense)} disabled={deletingExpenseId === expense.id} aria-label={`Delete ${expense.description}`}><Trash2 size={14} aria-hidden="true" /> {deletingExpenseId === expense.id ? "Deleting…" : "Delete"}</button></div></div>
                     </li>)}</ul>}
                 </>}
               </div>
@@ -354,7 +377,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
                 {selectedDayKey && <div className="selected-day" aria-live="polite">
                   <div className="selected-day-heading"><div><p className="section-label">Selected day</p><h4>Expenses on {formatDay(selectedDayKey)}</h4></div><strong>{formatCurrency(selectedDayTotal)}</strong></div>
                   {selectedDayExpenses.length === 0 ? <p className="day-empty">No expenses recorded for this day.</p>
-                    : <ul>{selectedDayExpenses.map((expense) => <li className={editingExpenseId === expense.id ? "is-editing" : undefined} key={expense.id}><span>{expense.description}<small>{expense.category}</small><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></span><div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button></div></li>)}</ul>}
+                    : <ul>{selectedDayExpenses.map((expense) => <li className={editingExpenseId === expense.id ? "is-editing" : undefined} key={expense.id}><span>{expense.description}<small>{expense.category}</small><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></span><div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><div className="expense-actions"><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} disabled={deletingExpenseId === expense.id} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button><button className="delete-expense-button" type="button" onClick={() => void handleDelete(expense)} disabled={deletingExpenseId === expense.id} aria-label={`Delete ${expense.description}`}><Trash2 size={14} aria-hidden="true" /> {deletingExpenseId === expense.id ? "Deleting…" : "Delete"}</button></div></div></li>)}</ul>}
                 </div>}
               </div>
             </>}

@@ -1,5 +1,6 @@
 import { EXPENSE_CATEGORIES, type ExpenseCategory } from "./expense-form";
 import type { ExpenseRepository, NewExpense } from "./expenses";
+import { deleteProofFiles, type ProofFile } from "./expense-proofs";
 
 type ValidationResult =
   | { value: NewExpense }
@@ -112,5 +113,20 @@ export async function patchExpense(
       { error: "We couldn't update this expense. Please try again." },
       { status: 500 },
     );
+  }
+}
+
+export function deleteExpense(
+  id: number,
+  repository: Pick<ExpenseRepository, "delete">,
+  cleanup: (proofs: ProofFile[]) => void = deleteProofFiles,
+): Response {
+  try {
+    const deleted = repository.delete(id);
+    if (!deleted) return Response.json({ error: "Expense not found." }, { status: 404 });
+    cleanup(deleted.proofs);
+    return Response.json({ deleted: true, expense: deleted.expense });
+  } catch {
+    return Response.json({ error: "We couldn't delete this expense. Please try again." }, { status: 500 });
   }
 }

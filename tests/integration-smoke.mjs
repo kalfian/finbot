@@ -76,6 +76,11 @@ try {
   assert.equal(mcp.status, 200);
   assert.equal((await mcp.json()).result.tools.length, 9);
 
+  const deleted = await fetch(`${base}/api/expenses/${expenses[0].id}`, { method: "DELETE", headers: { Cookie: adminCookie } });
+  assert.equal(deleted.status, 200);
+  const afterDelete = await fetch(`${base}/api/v1/expenses`, { headers: authorization });
+  assert.equal((await afterDelete.json()).expenses.length, 41);
+
   const createdUser = await fetch(`${base}/api/users`, {
     method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
     body: JSON.stringify({ username: "smoke-user", password: "temporary123" }),

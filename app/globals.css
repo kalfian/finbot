@@ -102,8 +102,13 @@ h1 { font-size: 25px; font-weight: 760; }
 :root[data-theme="dark"] .expense-meta span { color: var(--accent); }
 .expense-list strong { align-self: start; flex: none; white-space: nowrap; font-size: 14px; }
 .expense-side { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 8px; }
-.edit-expense-button { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 3px 0; color: var(--accent); background: transparent; font-size: 12px; font-weight: 700; }
-.edit-expense-button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.expense-actions { display: flex; align-items: center; gap: 12px; }
+.edit-expense-button, .delete-expense-button { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 3px 0; background: transparent; font-size: 12px; font-weight: 700; }
+.edit-expense-button { color: var(--accent); }
+.delete-expense-button { color: var(--danger); }
+.edit-expense-button:hover, .delete-expense-button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.edit-expense-button:disabled, .delete-expense-button:disabled { cursor: wait; opacity: .55; }
+.activity-message { margin: 0 30px 8px; font-size: 12px; }
 .expense-list li.is-editing, .selected-day li.is-editing { box-shadow: inset 3px 0 0 var(--accent); }
 .expense-list li.is-editing { padding-left: 12px; }
 .proof-controls { margin-top: 8px; }

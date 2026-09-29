@@ -1,6 +1,6 @@
 # Expense Tracker
 
-A local-first expense tracker for everyday spending. Record expenses in a focused web UI, search by description or category, filter by date, explore a calendar, and download a matching PDF. An external agent such as Hermes can use the token-authenticated REST API or MCP endpoint to turn a chat message into a recorded expense and a verified budget reply.
+A local-first expense tracker for everyday spending. Record, edit, and delete expenses in a focused web UI, search by description or category, filter by date, explore a calendar, and download a matching PDF. Deleting an expense also removes its source mapping and private proof files. An external agent such as Hermes can use the token-authenticated REST API or MCP endpoint to turn a chat message into a recorded expense and a verified budget reply.
 
 Attach receipt photos or PDFs as proof to new or existing expenses. Up to three files per expense, 5 MiB each; files stay on this machine.
 

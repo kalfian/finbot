@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 
 import { initializeDatabase } from "../lib/database";
 import { createExpenseRepository } from "../lib/expenses";
-import { getExpenses, patchExpense, postExpense } from "../lib/expense-api";
+import { deleteExpense, getExpenses, patchExpense, postExpense } from "../lib/expense-api";
 import { createUserRepository } from "../lib/auth";
 
 function createTestRepository() {
@@ -96,6 +96,34 @@ test("expenses and source IDs are isolated by user", () => {
     assert.deepEqual(userExpenses.list(), [userExpense]);
     assert.equal(userExpenses.update(adminExpense.id, userInput), null);
     assert.equal(adminExpenses.list()[0].description, "Admin lunch");
+  } finally {
+    database.close();
+  }
+});
+
+test("repository deletion removes owned expense relations without crossing users", async () => {
+  const database = new Database(":memory:");
+  try {
+    initializeDatabase(database);
+    const user = createUserRepository(database).create("delete-user", "temporary123");
+    const adminExpenses = createExpenseRepository(database, 1);
+    const userExpenses = createExpenseRepository(database, user.id);
+    const adminExpense = adminExpenses.record({ amountCents: 1000, description: "Admin", category: "Other", date: "2026-02-14T08:30:00.000Z" }, "delete:shared").expense;
+    userExpenses.record({ amountCents: 2000, description: "User", category: "Other", date: "2026-02-14T09:30:00.000Z" }, "delete:shared");
+    database.prepare(`INSERT INTO expense_proofs (id, expense_id, filename, mime_type, size_bytes, sha256, created_at)
+      VALUES ('delete-proof', ?, 'receipt.png', 'image/png', 12, 'hash', '2026-02-14T10:00:00.000Z')`).run(adminExpense.id);
+
+    assert.equal(userExpenses.delete(adminExpense.id), null);
+    const cleaned: unknown[] = [];
+    const response = deleteExpense(adminExpense.id, adminExpenses, (proofs) => cleaned.push(...proofs));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { deleted: true, expense: { ...adminExpense, proofCount: 1 } });
+    assert.deepEqual(cleaned, [{ id: "delete-proof", mimeType: "image/png" }]);
+    assert.equal((database.prepare("SELECT COUNT(*) AS count FROM expense_sources WHERE expense_id = ?").get(adminExpense.id) as { count: number }).count, 0);
+    assert.equal((database.prepare("SELECT COUNT(*) AS count FROM expense_proofs WHERE expense_id = ?").get(adminExpense.id) as { count: number }).count, 0);
+    assert.equal(adminExpenses.list().length, 0);
+    assert.equal(userExpenses.list().length, 1);
+    assert.equal(deleteExpense(adminExpense.id, adminExpenses).status, 404);
   } finally {
     database.close();
   }
@@ -322,6 +350,9 @@ test("API returns a generic error when persistence fails", async () => {
     update() {
       throw new Error("database path should not be exposed");
     },
+    delete() {
+      throw new Error("database path should not be exposed");
+    },
   };
 
   const createResponse = await postExpense(
@@ -354,6 +385,12 @@ test("API returns a generic error when persistence fails", async () => {
   assert.equal(updateResponse.status, 500);
   assert.deepEqual(await updateResponse.json(), {
     error: "We couldn't update this expense. Please try again.",
+  });
+
+  const deleteResponse = deleteExpense(1, failingRepository);
+  assert.equal(deleteResponse.status, 500);
+  assert.deepEqual(await deleteResponse.json(), {
+    error: "We couldn't delete this expense. Please try again.",
   });
 });
 

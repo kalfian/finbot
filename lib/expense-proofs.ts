@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { databasePath } from "./database";
 import { MAX_PROOFS, MAX_PROOF_BYTES, type ExpenseProof } from "./proof-types";
@@ -17,12 +17,26 @@ type ProofRow = {
   sha256: string;
 };
 
+export type ProofFile = { id: string; mimeType: string };
+
 export class ProofError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
 export function proofsDirectory(): string {
   return join(dirname(databasePath()), "proofs");
+}
+
+function proofExtension(mimeType: string): string | null {
+  return { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf" }[mimeType] ?? null;
+}
+
+export function deleteProofFiles(proofs: ProofFile[], directory = proofsDirectory()): void {
+  for (const proof of proofs) {
+    const extension = proofExtension(proof.mimeType);
+    if (!extension) continue;
+    try { rmSync(join(/* turbopackIgnore: true */ directory, `${proof.id}.${extension}`), { force: true }); } catch { /* Orphaned files remain private. */ }
+  }
 }
 
 function toProof(row: ProofRow): ExpenseProof {
@@ -114,7 +128,7 @@ export function readProof(database: Database.Database, userId: number, expenseId
     WHERE expense_proofs.expense_id = ? AND expense_proofs.id = ? AND expenses.user_id = ?
   `).get(expenseId, proofId, userId) as ProofRow | undefined;
   if (!row) throw new ProofError("Proof not found.", 404);
-  const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf" }[row.mime_type];
+  const extension = proofExtension(row.mime_type);
   if (!extension) throw new Error("Invalid stored proof type.");
   return { proof: toProof(row), bytes: new Uint8Array(readFileSync(join(/* turbopackIgnore: true */ directory, `${row.id}.${extension}`))) };
 }

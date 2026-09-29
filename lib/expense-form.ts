@@ -132,6 +132,14 @@ export async function updateExpense(
   throw new Error(message);
 }
 
+export async function deleteExpense(id: number, fetchImplementation: FetchImplementation = fetch): Promise<void> {
+  const response = await fetchImplementation(`/api/expenses/${id}`, { method: "DELETE" });
+  if (response.ok) return;
+  const body: unknown = await response.json().catch(() => null);
+  throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
+    ? body.error : "We couldn't delete this expense. Please try again.");
+}
+
 export async function uploadProof(expenseId: number, file: File, sourceId: string, fetchImplementation: FetchImplementation = fetch): Promise<void> {
   const form = new FormData();
   form.set("file", file);
