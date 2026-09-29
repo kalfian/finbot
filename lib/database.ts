@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_USERNAME, hashPassword } from "./auth";
@@ -60,8 +61,23 @@ export function initializeDatabase(database = openDatabase()): void {
   migrateBudgetTable(database);
   createExpenseSources(database);
   createProofsTable(database);
+  createAppSecretsTable(database);
   createSessionsTable(database);
   createIndexes(database);
+}
+
+function createAppSecretsTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_secrets (
+      name TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  if (!database.prepare("SELECT 1 FROM app_secrets WHERE name = 'session_jwt'").get()) {
+    database.prepare("INSERT OR IGNORE INTO app_secrets (name, value, created_at) VALUES ('session_jwt', ?, ?)")
+      .run(randomBytes(32).toString("base64url"), new Date().toISOString());
+  }
 }
 
 function createUsersTable(database: Database.Database): void {

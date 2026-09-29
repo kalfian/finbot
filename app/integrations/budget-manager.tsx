@@ -12,7 +12,7 @@ export default function BudgetManager() {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    void fetch("/api/budget").then((response) => response.ok ? response.json() : null)
+    void fetch("/api/v1/budget").then((response) => response.ok ? response.json() : null)
       .then((body) => { if (body?.budget) setBudget(body.budget); else setError("Monthly limit could not be loaded."); })
       .catch(() => setError("Monthly limit could not be loaded."));
   }, []);
@@ -21,7 +21,7 @@ export default function BudgetManager() {
     setPending(true);
     setError("");
     try {
-      const response = await fetch("/api/budget", {
+      const response = await fetch("/api/v1/budget", {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ monthlyLimitCents }),
       });

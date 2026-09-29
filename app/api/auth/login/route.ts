@@ -17,7 +17,7 @@ export async function POST(request: Request): Promise<Response> {
   const user = createUserRepository(database).authenticate(username, password);
   if (!user) return Response.json({ error: "Invalid username or password." }, { status: 401 });
   const session = createSessionRepository(database).create(user.id);
-  return Response.json({ user }, { headers: {
+  return Response.json({ user, accessToken: session.token, tokenType: "Bearer", expiresAt: session.expiresAt.toISOString() }, { headers: {
     "Cache-Control": "no-store",
     "Set-Cookie": sessionCookie(session.token, session.expiresAt, new URL(request.url).protocol === "https:"),
   } });

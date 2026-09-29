@@ -84,7 +84,7 @@ export async function saveExpense(
   expense: NewExpenseRequest,
   fetchImplementation: FetchImplementation = fetch,
 ): Promise<number> {
-  const response = await fetchImplementation("/api/expenses", {
+  const response = await fetchImplementation("/api/v1/expenses", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(expense),
@@ -118,7 +118,7 @@ export async function updateExpense(
   expense: NewExpenseRequest,
   fetchImplementation: FetchImplementation = fetch,
 ): Promise<void> {
-  const response = await fetchImplementation(`/api/expenses/${id}`, {
+  const response = await fetchImplementation(`/api/v1/expenses/${id}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(expense),
@@ -133,7 +133,7 @@ export async function updateExpense(
 }
 
 export async function deleteExpense(id: number, fetchImplementation: FetchImplementation = fetch): Promise<void> {
-  const response = await fetchImplementation(`/api/expenses/${id}`, { method: "DELETE" });
+  const response = await fetchImplementation(`/api/v1/expenses/${id}`, { method: "DELETE" });
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => null);
   throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
@@ -144,7 +144,7 @@ export async function uploadProof(expenseId: number, file: File, sourceId: strin
   const form = new FormData();
   form.set("file", file);
   form.set("sourceId", sourceId);
-  const response = await fetchImplementation(`/api/expenses/${expenseId}/proofs`, { method: "POST", body: form });
+  const response = await fetchImplementation(`/api/v1/expenses/${expenseId}/proofs`, { method: "POST", body: form });
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => null);
   throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"

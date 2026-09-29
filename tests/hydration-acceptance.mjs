@@ -12,7 +12,7 @@ const page = await browser.newPage();
 const postResponses = [];
 
 page.on("response", (response) => {
-  if (response.request().method() === "POST" && new URL(response.url()).pathname === "/api/expenses") {
+  if (response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/expenses") {
     postResponses.push(response.status());
   }
 });

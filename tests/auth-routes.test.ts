@@ -30,7 +30,7 @@ test("auth routes enforce first-login password change, roles, rotation, logout, 
     const passwordRoute = await import("../app/api/auth/password/route");
     const logoutRoute = await import("../app/api/auth/logout/route");
     const usersRoute = await import("../app/api/users/route");
-    const expensesRoute = await import("../app/api/expenses/route");
+    const expensesRoute = await import("../app/api/v1/expenses/route");
 
     const denied = await loginRoute.POST(new Request("http://localhost/api/auth/login", {
       method: "POST", headers: { origin: "https://attacker.example", "content-type": "application/json" },
@@ -44,18 +44,23 @@ test("auth routes enforce first-login password change, roles, rotation, logout, 
     }));
     assert.equal(login.status, 200);
     const temporaryCookie = cookieOf(login);
+    const temporaryLogin = await login.json();
+    assert.equal(temporaryLogin.accessToken.split(".").length, 3);
     assert.match(temporaryCookie, new RegExp(`^${SESSION_COOKIE}=`));
-    assert.equal(expensesRoute.GET(new Request("http://localhost/api/expenses", { headers: { cookie: temporaryCookie } })).status, 403);
+    assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { cookie: temporaryCookie } })).status, 403);
 
     const changed = await passwordRoute.PUT(new Request("http://localhost/api/auth/password", {
-      method: "PUT", headers: { cookie: temporaryCookie, origin: "http://localhost", "content-type": "application/json" },
+      method: "PUT", headers: { authorization: `Bearer ${temporaryLogin.accessToken}`, "content-type": "application/json" },
       body: JSON.stringify({ currentPassword: "123456", newPassword: "adminsecure123" }),
     }));
     assert.equal(changed.status, 200);
     const adminCookie = cookieOf(changed);
+    const changedBody = await changed.json();
     assert.notEqual(adminCookie, temporaryCookie);
-    assert.equal(expensesRoute.GET(new Request("http://localhost/api/expenses", { headers: { cookie: temporaryCookie } })).status, 401);
-    assert.equal(expensesRoute.GET(new Request("http://localhost/api/expenses", { headers: { cookie: adminCookie } })).status, 200);
+    assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { cookie: temporaryCookie } })).status, 401);
+    assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { authorization: `Bearer ${temporaryLogin.accessToken}` } })).status, 401);
+    assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { cookie: adminCookie } })).status, 200);
+    assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { authorization: `Bearer ${changedBody.accessToken}` } })).status, 200);
 
     const created = await usersRoute.POST(new Request("http://localhost/api/users", {
       method: "POST", headers: { cookie: adminCookie, origin: "http://localhost", "content-type": "application/json" },
@@ -82,7 +87,7 @@ test("auth routes enforce first-login password change, roles, rotation, logout, 
     assert.equal(logout.status, 303);
     assert.equal(logout.headers.get("location"), "http://127.0.0.1:3000/login");
     assert.match(logout.headers.get("set-cookie") ?? "", /Max-Age=0/);
-    assert.equal(expensesRoute.GET(new Request("http://localhost/api/expenses", { headers: { cookie: adminCookie } })).status, 401);
+    assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { cookie: adminCookie } })).status, 401);
   } finally {
     moduleWithResolver._resolveFilename = originalResolveFilename;
     if (originalDatabasePath === undefined) delete process.env.DATABASE_PATH;

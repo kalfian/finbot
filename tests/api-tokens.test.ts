@@ -3,7 +3,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { initializeDatabase } from "../lib/database";
 import { createTokenRepository, authenticateBearer, requireToken } from "../lib/api-tokens";
-import { createUserRepository } from "../lib/auth";
+import { createSessionRepository, createUserRepository } from "../lib/auth";
 
 test("tokens are only returned at creation and revocation takes effect immediately", () => {
   const database = new Database(":memory:");
@@ -19,6 +19,21 @@ test("tokens are only returned at creation and revocation takes effect immediate
     assert.equal(authenticateBearer(new Request("http://localhost"), database), null);
     assert.equal(tokens.revoke(issued.id), true);
     assert.equal(authenticateBearer(new Request("http://localhost", { headers: { authorization: `Bearer ${issued.token}` } }), database), null);
+  } finally {
+    database.close();
+  }
+});
+
+test("Bearer authentication accepts revocable login JWTs", () => {
+  const database = new Database(":memory:");
+  try {
+    initializeDatabase(database);
+    const sessions = createSessionRepository(database);
+    const issued = sessions.create(1);
+    const request = new Request("http://localhost", { headers: { authorization: `Bearer ${issued.token}` } });
+    assert.equal(authenticateBearer(request, database)?.id, 1);
+    sessions.revoke(issued.token);
+    assert.equal(authenticateBearer(request, database), null);
   } finally {
     database.close();
   }

@@ -1,4 +1,4 @@
-import { requireToken } from "@/lib/api-tokens";
+import { requireApiAuth } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
 import { getExpenses, validateExpense } from "@/lib/expense-api";
 import { createExpenseRepository } from "@/lib/expenses";
@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 
 export function GET(request: Request): Response {
   const database = getDatabase();
-  const auth = requireToken(request, database);
+  const auth = requireApiAuth(request, database);
   if ("response" in auth) return auth.response;
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q") ?? "";
@@ -22,7 +22,7 @@ export function GET(request: Request): Response {
 
 export async function POST(request: Request): Promise<Response> {
   const database = getDatabase();
-  const auth = requireToken(request, database);
+  const auth = requireApiAuth(request, database, { write: true });
   if ("response" in auth) return auth.response;
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "Request body must be valid JSON." }, { status: 400 }); }

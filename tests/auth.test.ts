@@ -50,14 +50,16 @@ test("admin creates users and password changes revoke forced-change state", () =
   }
 });
 
-test("sessions store only token hashes and can be revoked", () => {
+test("login sessions use signed JWTs, store only hashes, and can be revoked", () => {
   const database = new Database(":memory:");
   try {
     initializeDatabase(database);
     const admin = createUserRepository(database).authenticate(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD)!;
     const sessions = createSessionRepository(database);
     const issued = sessions.create(admin.id);
+    assert.equal(issued.token.split(".").length, 3);
     assert.equal(sessions.verify(issued.token)?.id, admin.id);
+    assert.equal(sessions.verify(`${issued.token.slice(0, -1)}x`), null);
     assert.equal(JSON.stringify(database.prepare("SELECT * FROM sessions").all()).includes(issued.token), false);
     assert.match(sessionCookie(issued.token, issued.expiresAt, false), /HttpOnly; SameSite=Lax/);
     sessions.revoke(issued.token);

@@ -97,7 +97,7 @@ test("saveExpense posts the request and handles success and API errors", async (
 
   await saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, successfulFetch);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].input, "/api/expenses");
+  assert.equal(calls[0].input, "/api/v1/expenses");
   assert.equal(calls[0].init?.method, "POST");
   assert.deepEqual(calls[0].init?.headers, { "content-type": "application/json" });
   assert.deepEqual(JSON.parse(calls[0].init?.body as string), {
@@ -129,7 +129,7 @@ test("updateExpense patches the selected expense and handles API errors", async 
   const expense = { amountCents: 2500, description: "Dinner", category: "Food" as const, date: "2026-02-14T12:30:00.000Z" };
 
   await updateExpense(7, expense, successfulFetch);
-  assert.equal(calls[0].input, "/api/expenses/7");
+  assert.equal(calls[0].input, "/api/v1/expenses/7");
   assert.equal(calls[0].init?.method, "PATCH");
   assert.deepEqual(JSON.parse(calls[0].init?.body as string), expense);
 
@@ -144,7 +144,7 @@ test("deleteExpense removes the selected expense and handles API errors", async 
     return new Response(JSON.stringify({ deleted: true }), { status: 200 });
   };
   await deleteExpense(7, successfulFetch);
-  assert.equal(calls[0].input, "/api/expenses/7");
+  assert.equal(calls[0].input, "/api/v1/expenses/7");
   assert.equal(calls[0].init?.method, "DELETE");
 
   const failingFetch: typeof fetch = async () => new Response(JSON.stringify({ error: "Expense not found." }), { status: 404 });
@@ -161,4 +161,13 @@ test("the tracker exposes edit actions and an explicit edit mode", () => {
   assert.match(source, /aria-label=\{`Delete \$\{expense\.description\}`\}/);
   assert.match(source, /window\.confirm/);
   assert.match(source, /onClick=\{startAdding\}/);
+});
+
+test("the web client uses the same REST v1 expense, proof, and budget contracts", () => {
+  const tracker = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
+  const proofs = readFileSync(new URL("../app/proof-controls.tsx", import.meta.url), "utf8");
+  const budget = readFileSync(new URL("../app/integrations/budget-manager.tsx", import.meta.url), "utf8");
+  assert.match(tracker, /fetch\("\/api\/v1\/expenses"\)/);
+  assert.match(proofs, /\/api\/v1\/expenses\/\$\{expenseId\}\/proofs/);
+  assert.match(budget, /fetch\("\/api\/v1\/budget"/);
 });

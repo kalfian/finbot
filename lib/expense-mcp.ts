@@ -8,12 +8,13 @@ import { filterReportExpenses, validateReportRange } from "./expense-filters";
 import { EXPENSE_CATEGORIES } from "./expense-form";
 import { validateExpense } from "./expense-api";
 import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
-import { listProofs, ProofError, readProof, saveProof } from "./expense-proofs";
+import { deleteProofFiles, listProofs, ProofError, readProof, saveProof } from "./expense-proofs";
 
 export function createExpenseMcpServer(database: Database.Database, userId: number, proofDirectory?: string): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
   const repository = createExpenseRepository(database, userId);
   const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
+  const failure = (code: string, error: string, hint: string) => ({ isError: true, ...result({ error, code, hint }) });
   server.registerTool("list_expenses", {
     title: "List expenses",
     description: "List expenses newest first, optionally filtering description or category and inclusive Asia/Jakarta calendar dates.",
@@ -23,7 +24,8 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       to: z.string().default(""),
     },
   }, async ({ query, from, to }) => {
-    if (!validateReportRange(from, to)) return { isError: true, ...result({ error: "Choose a valid date range (YYYY-MM-DD)." }) };
+    if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
+      "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
     return result({ expenses: filterReportExpenses(repository.list(), { query, start: from, end: to }) });
   });
   server.registerTool("create_expense", {
@@ -38,12 +40,61 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
     },
   }, async (expense) => {
     const validation = validateExpense(expense);
-    if ("error" in validation) return { isError: true, ...result({ error: validation.error }) };
+    if ("error" in validation) return failure("INVALID_EXPENSE", validation.error,
+      "Correct the expense fields and retry create_expense.");
     try {
       const { expense: created, replayed } = repository.record(validation.value, expense.sourceId);
       return result({ expense: created, replayed, budget: budgetSnapshot(database, userId, created.date) });
     } catch (error) {
-      return { isError: true, ...result({ error: error instanceof Error ? error.message : "Expense could not be saved." }) };
+      const message = error instanceof Error ? error.message : "Expense could not be saved.";
+      return failure(message.startsWith("sourceId") ? "SOURCE_ID_CONFLICT" : "EXPENSE_CREATE_FAILED", message,
+        message.startsWith("sourceId") ? "Reuse a sourceId only for an identical expense." : "Retry once, then check the finbot MCP server log.");
+    }
+  });
+  server.registerTool("update_expense", {
+    title: "Update expense",
+    description: "Replace an owned expense's amount, description, category, and date. Returns the updated expense and recalculated budget snapshot.",
+    inputSchema: {
+      expenseId: z.number().int().positive().safe(),
+      amountCents: z.number().int().positive().safe(),
+      description: z.string().trim().min(1),
+      category: z.enum(EXPENSE_CATEGORIES),
+      date: z.string(),
+    },
+  }, async ({ expenseId, ...expense }) => {
+    const validation = validateExpense(expense);
+    if ("error" in validation) return failure("INVALID_EXPENSE", validation.error,
+      "Provide expenseId and all four editable expense fields, then retry update_expense.");
+    try {
+      const updated = repository.update(expenseId, validation.value);
+      if (!updated) return failure("EXPENSE_NOT_FOUND", "Expense not found or not owned by this user.",
+        "Call list_expenses and verify the expenseId before retrying.");
+      return result({ expense: updated, budget: budgetSnapshot(database, userId, updated.date) });
+    } catch {
+      return failure("EXPENSE_UPDATE_FAILED", "Expense could not be updated.",
+        "Retry once. If it still fails, inspect the finbot server log using the MCP request ID.");
+    }
+  });
+  server.registerTool("delete_expense", {
+    title: "Delete expense",
+    description: "Permanently delete an owned expense, its source mapping, and private proof files. Invoke only after the user explicitly confirms deletion.",
+    inputSchema: {
+      expenseId: z.number().int().positive().safe(),
+      confirm: z.boolean(),
+    },
+  }, async ({ expenseId, confirm }) => {
+    if (!confirm) return failure("DELETE_CONFIRMATION_REQUIRED", "Deletion was not confirmed.",
+      "Ask the user to confirm the exact expense, then retry with confirm=true.");
+    try {
+      const deleted = repository.delete(expenseId);
+      if (!deleted) return failure("EXPENSE_NOT_FOUND", "Expense not found or not owned by this user.",
+        "Call list_expenses and verify the expenseId before retrying.");
+      deleteProofFiles(deleted.proofs, proofDirectory);
+      return result({ deleted: true, expense: deleted.expense,
+        budget: budgetSnapshot(database, userId, deleted.expense.date) });
+    } catch {
+      return failure("EXPENSE_DELETE_FAILED", "Expense could not be deleted.",
+        "Retry once. If it still fails, inspect the finbot server log using the MCP request ID.");
     }
   });
   server.registerTool("list_expense_proofs", {
@@ -52,7 +103,8 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
     inputSchema: { expenseId: z.number().int().positive().safe() },
   }, async ({ expenseId }) => {
     try { return result({ proofs: listProofs(database, userId, expenseId) }); }
-    catch (error) { return { isError: true, ...result({ error: error instanceof Error ? error.message : "Proofs unavailable." }) }; }
+    catch (error) { return failure("PROOF_LIST_FAILED", error instanceof Error ? error.message : "Proofs unavailable.",
+      "Verify the expenseId belongs to this user, then retry."); }
   });
   server.registerTool("attach_expense_proof", {
     title: "Attach expense proof",
@@ -66,14 +118,17 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
     },
   }, async ({ expenseId, filename, mimeType, base64, sourceId }) => {
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
-      return { isError: true, ...result({ error: "base64 must be valid encoded file bytes." }) };
+      return failure("INVALID_BASE64", "base64 must contain valid encoded file bytes.",
+        "Encode the complete file bytes as standard base64 and retry.");
     }
     try {
       const file = new File([Buffer.from(base64, "base64")], filename, { type: mimeType });
       const saved = await saveProof(database, userId, expenseId, file, proofDirectory, sourceId);
       return result(saved);
     } catch (error) {
-      return { isError: true, ...result({ error: error instanceof ProofError ? error.message : "Proof could not be saved." }) };
+      return failure(error instanceof ProofError ? "PROOF_REJECTED" : "PROOF_SAVE_FAILED",
+        error instanceof ProofError ? error.message : "Proof could not be saved.",
+        "Verify the expenseId, file type, 5 MB size limit, three-proof limit, and sourceId before retrying.");
     }
   });
   server.registerTool("get_expense_proof", {
@@ -87,7 +142,9 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
         uri: `expense-tracker://expenses/${expenseId}/proofs/${proof.id}`, mimeType: proof.mimeType, blob: Buffer.from(bytes).toString("base64"),
       } }] };
     } catch (error) {
-      return { isError: true, ...result({ error: error instanceof ProofError ? error.message : "Proof could not be read." }) };
+      return failure(error instanceof ProofError ? "PROOF_NOT_FOUND" : "PROOF_READ_FAILED",
+        error instanceof ProofError ? error.message : "Proof could not be read.",
+        "Call list_expense_proofs and verify both expenseId and proofId before retrying.");
     }
   });
   server.registerTool("budget_status", {
@@ -95,7 +152,8 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
     description: "Return Asia/Jakarta day and month spending, recurring monthly IDR limit, signed remaining amount, and exceeded status. Defaults to today.",
     inputSchema: { date: z.string().default("") },
   }, async ({ date }) => {
-    if (date && !validBudgetDate(date)) return { isError: true, ...result({ error: "date must be YYYY-MM-DD." }) };
+    if (date && !validBudgetDate(date)) return failure("INVALID_BUDGET_DATE", "date must use YYYY-MM-DD.",
+      "Pass an Asia/Jakarta calendar date or leave date empty for today.");
     return result(budgetSnapshot(database, userId, date || new Date().toISOString()));
   });
   server.registerTool("set_monthly_limit", {
@@ -115,7 +173,8 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       to: z.string().default(""),
     },
   }, async ({ query, from, to }) => {
-    if (!validateReportRange(from, to)) return { isError: true, ...result({ error: "Choose a valid date range (YYYY-MM-DD)." }) };
+    if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
+      "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
     const expenses = filterReportExpenses(repository.list(), { query, start: from, end: to });
     const categories: Record<string, { count: number; amountCents: number }> = {};
     for (const expense of expenses) {
@@ -135,7 +194,8 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       to: z.string().default(""),
     },
   }, async ({ query, from, to }) => {
-    if (!validateReportRange(from, to)) return { isError: true, ...result({ error: "Choose a valid date range (YYYY-MM-DD)." }) };
+    if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
+      "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
     const pdf = await buildExpensePdf(repository.list(), { query, start: from, end: to });
     return { content: [{ type: "resource", resource: {
       uri: "expense-tracker://reports/filtered.pdf", mimeType: "application/pdf", blob: pdf.toString("base64"),

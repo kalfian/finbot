@@ -73,7 +73,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     setIsLoading(true);
     setLoadError("");
     try {
-      const response = await fetch("/api/expenses");
+      const response = await fetch("/api/v1/expenses");
       const body: unknown = await response.json();
       if (!response.ok || !body || typeof body !== "object" || !("expenses" in body) || !Array.isArray(body.expenses)) {
         throw new Error();

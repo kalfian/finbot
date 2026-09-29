@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type Database from "better-sqlite3";
-import type { AuthUser } from "./auth";
+import { createSessionRepository, type AuthUser } from "./auth";
 
 type TokenRow = { id: number; label: string; created_at: string };
 
@@ -27,8 +27,10 @@ export function createTokenRepository(database: Database.Database, userId: numbe
 
 export function authenticateBearer(request: Request, database: Database.Database): AuthUser | null {
   const header = request.headers.get("authorization");
-  if (!header || !/^Bearer et_[a-f0-9]{64}$/.test(header)) return null;
+  if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice(7);
+  if (token.split(".").length === 3) return createSessionRepository(database).verify(token);
+  if (!/^et_[a-f0-9]{64}$/.test(token)) return null;
   const hash = createHash("sha256").update(token).digest();
   const row = database.prepare(`
     SELECT api_tokens.token_hash, users.id, users.username, users.role, users.must_change_password, users.created_at
@@ -41,12 +43,16 @@ export function authenticateBearer(request: Request, database: Database.Database
     mustChangePassword: !!row.must_change_password, createdAt: row.created_at };
 }
 
-export function requireToken(request: Request, database: Database.Database): { user: AuthUser } | { response: Response } {
+export function requireToken(
+  request: Request,
+  database: Database.Database,
+  options: { allowPasswordChange?: boolean } = {},
+): { user: AuthUser } | { response: Response } {
   const user = authenticateBearer(request, database);
-  if (user?.mustChangePassword) {
+  if (user?.mustChangePassword && !options.allowPasswordChange) {
     return { response: Response.json({ error: "Password change required.", code: "PASSWORD_CHANGE_REQUIRED" }, { status: 403 }) };
   }
   return user
     ? { user }
-    : { response: Response.json({ error: "A valid Bearer token is required." }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }) };
+    : { response: Response.json({ error: "A valid JWT or generated Bearer token is required." }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }) };
 }

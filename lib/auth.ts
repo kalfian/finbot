@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type Database from "better-sqlite3";
 
 export const SESSION_COOKIE = "expense_tracker_session";
@@ -129,6 +129,66 @@ function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+type SessionPayload = {
+  iss: "expense-tracker";
+  aud: "expense-tracker-api";
+  sub: string;
+  jti: string;
+  iat: number;
+  exp: number;
+};
+
+function jwtSecret(database: Database.Database): string {
+  const row = database.prepare("SELECT value FROM app_secrets WHERE name = 'session_jwt'").get() as { value: string } | undefined;
+  if (!row) throw new Error("JWT signing secret is unavailable.");
+  return row.value;
+}
+
+function encodeJwtPart(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function signJwt(encodedHeader: string, encodedPayload: string, secret: string): string {
+  return createHmac("sha256", secret).update(`${encodedHeader}.${encodedPayload}`).digest("base64url");
+}
+
+function issueSessionJwt(database: Database.Database, userId: number, issuedAt: number): { token: string; expiresAt: Date } {
+  const expiresAt = new Date((issuedAt + SESSION_TTL_SECONDS) * 1000);
+  const header = encodeJwtPart({ alg: "HS256", typ: "JWT" });
+  const payload = encodeJwtPart({
+    iss: "expense-tracker",
+    aud: "expense-tracker-api",
+    sub: String(userId),
+    jti: randomBytes(16).toString("base64url"),
+    iat: issuedAt,
+    exp: issuedAt + SESSION_TTL_SECONDS,
+  } satisfies SessionPayload);
+  return { token: `${header}.${payload}.${signJwt(header, payload, jwtSecret(database))}`, expiresAt };
+}
+
+function verifySessionJwt(database: Database.Database, token: string): SessionPayload | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [header, payload, signature] = parts;
+  const expected = Buffer.from(signJwt(header, payload, jwtSecret(database)));
+  const actual = Buffer.from(signature);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
+  try {
+    const decodedHeader = JSON.parse(Buffer.from(header, "base64url").toString()) as Record<string, unknown>;
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString()) as Partial<SessionPayload>;
+    const now = Math.floor(Date.now() / 1000);
+    if (decodedHeader.alg !== "HS256" || decodedHeader.typ !== "JWT"
+      || decoded.iss !== "expense-tracker" || decoded.aud !== "expense-tracker-api"
+      || typeof decoded.sub !== "string" || !/^[1-9]\d*$/.test(decoded.sub)
+      || typeof decoded.jti !== "string" || !decoded.jti
+      || !Number.isSafeInteger(decoded.iat) || !Number.isSafeInteger(decoded.exp)
+      || decoded.exp! <= now || decoded.iat! > now + 60 || decoded.exp! - decoded.iat! !== SESSION_TTL_SECONDS) return null;
+    return decoded as SessionPayload;
+  } catch {
+    return null;
+  }
+}
+
 export function createSessionRepository(database: Database.Database) {
   const insert = database.prepare("INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)");
   const lookup = database.prepare(`
@@ -141,20 +201,21 @@ export function createSessionRepository(database: Database.Database) {
   const removeExpired = database.prepare("DELETE FROM sessions WHERE expires_at <= ?");
   return {
     create(userId: number): { token: string; expiresAt: Date } {
-      const token = randomBytes(32).toString("base64url");
-      const createdAt = new Date();
-      const expiresAt = new Date(createdAt.getTime() + SESSION_TTL_SECONDS * 1000);
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const createdAt = new Date(issuedAt * 1000);
+      const { token, expiresAt } = issueSessionJwt(database, userId, issuedAt);
       insert.run(tokenHash(token), userId, expiresAt.toISOString(), createdAt.toISOString());
       return { token, expiresAt };
     },
     verify(token: string): AuthUser | null {
-      if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+      const payload = verifySessionJwt(database, token);
+      if (!payload) return null;
       removeExpired.run(new Date().toISOString());
       const row = lookup.get(tokenHash(token), new Date().toISOString()) as UserRow | undefined;
-      return row ? toUser(row) : null;
+      return row && String(row.id) === payload.sub ? toUser(row) : null;
     },
     revoke(token: string): void {
-      if (/^[A-Za-z0-9_-]{43}$/.test(token)) remove.run(tokenHash(token));
+      remove.run(tokenHash(token));
     },
     revokeUser(userId: number): void {
       removeUser.run(userId);

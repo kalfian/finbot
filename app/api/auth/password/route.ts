@@ -1,14 +1,16 @@
-import { createSessionRepository, createUserRepository, requireSameOrigin, requireSession, sessionCookie } from "@/lib/auth";
+import { requireApiAuth } from "@/lib/api-auth";
+import { createSessionRepository, createUserRepository, sessionCookie } from "@/lib/auth";
 import { getDatabase } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 export async function PUT(request: Request): Promise<Response> {
-  const originDenied = requireSameOrigin(request);
-  if (originDenied) return originDenied;
   const database = getDatabase();
-  const auth = requireSession(request, database, { allowPasswordChange: true });
+  const auth = requireApiAuth(request, database, { write: true, allowPasswordChange: true });
   if ("response" in auth) return auth.response;
+  if (auth.credential === "generated") {
+    return Response.json({ error: "Password changes require a login JWT." }, { status: 403 });
+  }
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "Valid JSON is required." }, { status: 400 }); }
   const currentPassword = body && typeof body === "object" && "currentPassword" in body ? body.currentPassword : null;
@@ -21,7 +23,7 @@ export async function PUT(request: Request): Promise<Response> {
     const sessions = createSessionRepository(database);
     sessions.revokeUser(user.id);
     const session = sessions.create(user.id);
-    return Response.json({ user }, { headers: {
+    return Response.json({ user, accessToken: session.token, tokenType: "Bearer", expiresAt: session.expiresAt.toISOString() }, { headers: {
       "Cache-Control": "no-store",
       "Set-Cookie": sessionCookie(session.token, session.expiresAt, new URL(request.url).protocol === "https:"),
     } });

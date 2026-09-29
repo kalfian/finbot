@@ -36,6 +36,7 @@ test("legacy data migrates to admin ownership with required isolation indexes", 
     assert.equal((database.prepare("SELECT user_id FROM api_tokens WHERE id = 8").get() as { user_id: number }).user_id, 1);
     assert.equal((database.prepare("SELECT user_id FROM budget_settings").get() as { user_id: number }).user_id, 1);
     assert.equal((database.prepare("SELECT user_id FROM expense_sources").get() as { user_id: number }).user_id, 1);
+    assert.equal((database.prepare("SELECT length(value) AS length FROM app_secrets WHERE name = 'session_jwt'").get() as { length: number }).length >= 43, true);
 
     const indexes = new Set((database.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as Array<{ name: string }>).map(({ name }) => name));
     for (const name of ["users_username_unique", "expenses_user_date_id", "api_tokens_user_id_id", "expense_sources_expense_id", "sessions_user_id", "sessions_expires_at"]) {

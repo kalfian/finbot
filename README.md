@@ -1,6 +1,6 @@
 # Expense Tracker
 
-A local-first expense tracker for everyday spending. Record, edit, and delete expenses in a focused web UI, search by description or category, filter by date, explore a calendar, and download a matching PDF. Deleting an expense also removes its source mapping and private proof files. An external agent such as Hermes can use the token-authenticated REST API or MCP endpoint to turn a chat message into a recorded expense and a verified budget reply.
+A local-first expense tracker for everyday spending. Record, edit, and delete expenses in a focused web UI, search by description or category, filter by date, explore a calendar, and download a matching PDF. The web UI and external integrations share the same `/api/v1` expense, proof, and budget contracts. Deleting an expense also removes its source mapping and private proof files. An external agent such as Hermes can use the REST API or MCP endpoint to turn chat instructions into user-owned expense changes and verified budget replies.
 
 Attach receipt photos or PDFs as proof to new or existing expenses. Up to three files per expense, 5 MiB each; files stay on this machine.
 
@@ -49,7 +49,7 @@ Chat message → authorized agent → POST /api/v1/expenses or MCP create_expens
 Start here:
 
 1. Set a monthly limit on [Integrations](http://localhost:3000/integrations), if wanted. No limit is configured by default.
-2. Generate an integration token there and store it in the agent's secret store. A token acts only on the issuing user's records. Send `Authorization: Bearer <TOKEN>` to `/api/v1/*` or `/mcp`; never put the token in a URL, prompt, screenshot, log, or commit.
+2. Generate an integration token there and store it in the agent's secret store, or log in through `POST /api/auth/login` and use its short-lived, revocable JWT. Both credentials act only on their user's records. Send `Authorization: Bearer <TOKEN>` to `/api/v1/*` or `/mcp`; never put a token in a URL, prompt, screenshot, log, or commit. The browser keeps its login JWT in an HttpOnly cookie and calls the same `/api/v1` routes.
 3. Give the agent [the Hermes implementation guide](docs/hermes-agent.md). It contains the message/photo decision flow, example request/response, reference reply code, category mapping, clarification rules, idempotent retries, and security boundaries.
 4. Restrict the chat adapter to authorized senders. Run it on the same device or through a private authenticated connection; app login does not replace HTTPS or network hardening.
 
@@ -58,17 +58,21 @@ Start here:
 | Capability | REST | MCP |
 | --- | --- | --- |
 | Record and get post-write budget snapshot | `POST /api/v1/expenses` | `create_expense` |
+| Replace an expense and recalculate budget | `PATCH /api/v1/expenses/:id` | `update_expense` |
+| Permanently delete an expense and proofs | `DELETE /api/v1/expenses/:id` | `delete_expense` |
 | Attach, list, and read receipt proof | `/api/v1/expenses/:id/proofs` | `attach_expense_proof`, `list_expense_proofs`, `get_expense_proof` |
 | Search and list | `GET /api/v1/expenses?q=&from=&to=` | `list_expenses` |
 | Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
 | Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
 | Category summary and PDF tool | — | `expense_summary`, `export_report_pdf` |
 
-The REST create body requires positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Optional `sourceId` identifies the incoming chat message. A first write returns HTTP 201; an identical retry returns HTTP 200 with `replayed: true`; reusing an ID for different fields returns HTTP 409. `budget` includes Jakarta `date`/`month`, `todayCents`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`. An unset limit returns `null` for the limit and remaining amount; exceeding a limit informs the user but never blocks recording.
+The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes Jakarta `date`/`month`, `todayCents`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
 
 For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. Pass a stable proof `sourceId` for safe retries. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 
-The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by the same Bearer token. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The unversioned `/api/expenses` and `/api/reports/pdf` serve the browser session; they require login cookies instead of Bearer tokens.
+The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by a login JWT or generated Bearer token. `delete_expense` additionally requires `confirm: true`. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The browser uses the same `/api/v1` contracts through its HttpOnly JWT cookie; PDF download remains a browser-session route at `/api/reports/pdf`.
+
+Rejected MCP tool calls return JSON text with a stable `code`, readable `error`, suggested `hint`, and `requestId`. The same ID is returned in `X-MCP-Request-ID` and written to the finbot server log as a compact `[mcp]` JSON line without request arguments, file bytes, or credentials.
 
 ## Development
 

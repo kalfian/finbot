@@ -15,7 +15,7 @@ export default function ProofControls({ expenseId, count, onChange }: Props) {
   const [pending, setPending] = useState<{ file: File; sourceId: string }[]>([]);
 
   async function load() {
-    const response = await fetch(`/api/expenses/${expenseId}/proofs`);
+    const response = await fetch(`/api/v1/expenses/${expenseId}/proofs`);
     if (!response.ok) throw new Error("Could not load proofs.");
     const body = await response.json() as { proofs: ExpenseProof[] };
     setProofs(body.proofs);
@@ -70,7 +70,7 @@ export default function ProofControls({ expenseId, count, onChange }: Props) {
     </button>
     {open && <div className="proof-details">
       {proofs?.length === 0 && <p>No proofs attached yet.</p>}
-      {proofs?.map((proof) => <a key={proof.id} href={`/api/expenses/${expenseId}/proofs/${proof.id}`} target="_blank" rel="noopener noreferrer">
+      {proofs?.map((proof) => <a key={proof.id} href={`/api/v1/expenses/${expenseId}/proofs/${proof.id}`} target="_blank" rel="noopener noreferrer">
         <FileText size={14} aria-hidden="true" /> {proof.filename}
       </a>)}
       {count < MAX_PROOFS && <label className="proof-add"><Upload size={14} aria-hidden="true" />

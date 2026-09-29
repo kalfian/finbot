@@ -16,7 +16,7 @@ async function login(username, password) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }),
   });
   assert.equal(response.status, 200);
-  return cookieOf(response);
+  return { cookie: cookieOf(response), ...(await response.json()) };
 }
 
 async function changePassword(cookie, currentPassword, newPassword) {
@@ -25,12 +25,15 @@ async function changePassword(cookie, currentPassword, newPassword) {
     body: JSON.stringify({ currentPassword, newPassword }),
   });
   assert.equal(response.status, 200);
-  return cookieOf(response);
+  return { cookie: cookieOf(response), ...(await response.json()) };
 }
 
-const temporaryAdminCookie = await login("admin", "123456");
-assert.equal((await fetch(`${base}/api/expenses`, { headers: { Cookie: temporaryAdminCookie } })).status, 403);
-const adminCookie = await changePassword(temporaryAdminCookie, "123456", "smoke-admin-123");
+const temporaryAdmin = await login("admin", "123456");
+assert.equal(temporaryAdmin.accessToken.split(".").length, 3);
+assert.equal((await fetch(`${base}/api/v1/expenses`, { headers: { Cookie: temporaryAdmin.cookie } })).status, 403);
+const admin = await changePassword(temporaryAdmin.cookie, "123456", "smoke-admin-123");
+const adminCookie = admin.cookie;
+const jwtAuthorization = { Authorization: `Bearer ${admin.accessToken}` };
 
 const issuedResponse = await fetch(`${base}/api/tokens`, {
   method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
@@ -43,12 +46,13 @@ const anonymous = await fetch(`${base}/api/v1/expenses`);
 assert.equal(anonymous.status, 401);
 const anonymousMcp = await fetch(`${base}/mcp`, { method: "POST" });
 assert.equal(anonymousMcp.status, 401);
+assert.equal((await anonymousMcp.json()).requestId, anonymousMcp.headers.get("x-mcp-request-id"));
 
 try {
   for (let index = 0; index < 42; index += 1) {
     const response = await fetch(`${base}/api/v1/expenses`, {
       method: "POST",
-      headers: { ...authorization, "Content-Type": "application/json" },
+      headers: { ...(index === 0 ? { Cookie: adminCookie } : authorization), "Content-Type": "application/json" },
       body: JSON.stringify({
         amountCents: (index + 1) * 10000,
         description: `Transport receipt ${index + 1}`,
@@ -62,6 +66,12 @@ try {
   assert.equal(listed.status, 200);
   const { expenses } = await listed.json();
   assert.equal(expenses.length, 42);
+  const updated = await fetch(`${base}/api/v1/expenses/${expenses[0].id}`, {
+    method: "PATCH", headers: { ...jwtAuthorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ amountCents: 990000, description: "Updated by JWT", category: "Other", date: expenses[0].date }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).expense.description, "Updated by JWT");
   const pdfResponse = await fetch(`${base}/api/reports/pdf?q=transport&from=2026-09-24&to=2026-09-24`, { headers: { Cookie: adminCookie } });
   assert.equal(pdfResponse.status, 200);
   assert.match(pdfResponse.headers.get("content-type"), /application\/pdf/);
@@ -74,9 +84,21 @@ try {
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
   assert.equal(mcp.status, 200);
-  assert.equal((await mcp.json()).result.tools.length, 9);
+  assert.equal((await mcp.json()).result.tools.length, 11);
+  const rejectedMcp = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: { ...authorization, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "delete_expense", arguments: { expenseId: expenses[1].id, confirm: false } } }),
+  });
+  assert.equal(rejectedMcp.status, 200);
+  const rejectedRequestId = rejectedMcp.headers.get("x-mcp-request-id");
+  const rejectedBody = await rejectedMcp.json();
+  const rejectedDetail = JSON.parse(rejectedBody.result.content[0].text);
+  assert.equal(rejectedDetail.code, "DELETE_CONFIRMATION_REQUIRED");
+  assert.equal(rejectedDetail.requestId, rejectedRequestId);
 
-  const deleted = await fetch(`${base}/api/expenses/${expenses[0].id}`, { method: "DELETE", headers: { Cookie: adminCookie } });
+  const deleted = await fetch(`${base}/api/v1/expenses/${expenses[0].id}`, { method: "DELETE", headers: authorization });
   assert.equal(deleted.status, 200);
   const afterDelete = await fetch(`${base}/api/v1/expenses`, { headers: authorization });
   assert.equal((await afterDelete.json()).expenses.length, 41);
@@ -86,12 +108,21 @@ try {
     body: JSON.stringify({ username: "smoke-user", password: "temporary123" }),
   });
   assert.equal(createdUser.status, 201);
-  const temporaryUserCookie = await login("smoke-user", "temporary123");
-  const userCookie = await changePassword(temporaryUserCookie, "temporary123", "smoke-user-123");
-  const userLedger = await fetch(`${base}/api/expenses`, { headers: { Cookie: userCookie } });
+  const temporaryUser = await login("smoke-user", "temporary123");
+  const user = await changePassword(temporaryUser.cookie, "temporary123", "smoke-user-123");
+  const userLedger = await fetch(`${base}/api/v1/expenses`, { headers: { Cookie: user.cookie } });
   assert.equal(userLedger.status, 200);
   assert.deepEqual((await userLedger.json()).expenses, []);
-  console.log(JSON.stringify({ listed: expenses.length, pdfBytes: pdf.length, mcp: "authenticated", userIsolation: "verified" }));
+  const crossUserUpdate = await fetch(`${base}/api/v1/expenses/${expenses[1].id}`, {
+    method: "PATCH", headers: { Authorization: `Bearer ${user.accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ amountCents: 1, description: "Forbidden", category: "Other", date: expenses[1].date }),
+  });
+  assert.equal(crossUserUpdate.status, 404);
+  const crossUserDelete = await fetch(`${base}/api/v1/expenses/${expenses[1].id}`, {
+    method: "DELETE", headers: { Authorization: `Bearer ${user.accessToken}` },
+  });
+  assert.equal(crossUserDelete.status, 404);
+  console.log(JSON.stringify({ listed: expenses.length, pdfBytes: pdf.length, jwt: "authenticated", mcp: "authenticated", userIsolation: "verified" }));
 } finally {
   const revoked = await fetch(`${base}/api/tokens`, {
     method: "DELETE", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
