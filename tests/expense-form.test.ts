@@ -167,7 +167,12 @@ test("the web client uses the same REST v1 expense, proof, and budget contracts"
   const tracker = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
   const proofs = readFileSync(new URL("../app/proof-controls.tsx", import.meta.url), "utf8");
   const budget = readFileSync(new URL("../app/integrations/budget-manager.tsx", import.meta.url), "utf8");
+  const categories = readFileSync(new URL("../app/integrations/category-manager.tsx", import.meta.url), "utf8");
   assert.match(tracker, /fetch\("\/api\/v1\/expenses"\)/);
+  assert.match(tracker, /fetch\("\/api\/v1\/categories"\)/);
+  assert.match(tracker, /\/api\/v1\/reports\/pdf/);
   assert.match(proofs, /\/api\/v1\/expenses\/\$\{expenseId\}\/proofs/);
   assert.match(budget, /fetch\("\/api\/v1\/budget"/);
+  assert.match(categories, /fetch\("\/api\/v1\/categories"\)/);
+  assert.doesNotMatch(tracker, /\/api\/reports\/pdf/);
 });

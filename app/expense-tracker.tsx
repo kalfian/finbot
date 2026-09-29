@@ -15,7 +15,7 @@ import {
   summarizeLocalMonth,
   type CalendarExpense,
 } from "@/lib/expense-calendar";
-import { amountCentsToInput, deleteExpense, EXPENSE_CATEGORIES, getBrowserLocalDateTime, saveExpense, updateExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
+import { amountCentsToInput, deleteExpense, getBrowserLocalDateTime, saveExpense, updateExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
 import { MAX_PROOFS, MAX_PROOF_BYTES } from "@/lib/proof-types";
 import { calculateTotal, formatCurrency } from "@/lib/money";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
@@ -36,6 +36,7 @@ function formatDay(key: string): string {
 
 export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -48,7 +49,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   const [deletingExpenseId, setDeletingExpenseId] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Food");
+  const [category, setCategory] = useState("");
   const [date, setDate] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [pendingProofs, setPendingProofs] = useState<{ expenseId: number; files: { file: File; sourceId: string }[] } | null>(null);
@@ -88,9 +89,19 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     }
   }, []);
 
+  const loadCategories = useCallback(async (): Promise<void> => {
+    const response = await fetch("/api/v1/categories");
+    const body: unknown = await response.json();
+    if (!response.ok || !body || typeof body !== "object" || !("categories" in body) || !Array.isArray(body.categories)) throw new Error();
+    const names = (body.categories as Array<{ name?: unknown }>).flatMap((item) => typeof item.name === "string" ? [item.name] : []);
+    setCategories(names);
+    setCategory((current) => names.some((name) => name === current) ? current : names[0] ?? "");
+  }, []);
+
   useEffect(() => {
     void Promise.resolve().then(loadExpenses);
-  }, [loadExpenses]);
+    void Promise.resolve().then(loadCategories).catch(() => setLoadError("We couldn't load your categories. Please try again."));
+  }, [loadCategories, loadExpenses]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -135,7 +146,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     setFormError("");
     setInvalidField(null);
     setSuccessMessage("");
-    const validation = validateExpenseForm({ amount, description, category, date });
+    const validation = validateExpenseForm({ amount, description, category, date }, categories);
     if ("error" in validation) {
       const field = validation.error.startsWith("Enter an amount") ? "amount"
         : validation.error.startsWith("Enter a description") ? "description"
@@ -160,7 +171,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
       setEditingExpenseId(null);
       setAmount("");
       setDescription("");
-      setCategory("Food");
+      setCategory(categories[0] ?? "");
       setDate(getBrowserLocalDateTime());
       setFiles([]);
       if (proofInputRef.current) proofInputRef.current.value = "";
@@ -207,7 +218,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     setEditingExpenseId(null);
     setAmount("");
     setDescription("");
-    setCategory("Food");
+    setCategory(categories[0] ?? "");
     setDate(getBrowserLocalDateTime());
     setFiles([]);
     setFormError("");
@@ -264,7 +275,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     setReportError("");
     const params = new URLSearchParams({ q: searchQuery, from: reportStart, to: reportEnd });
     try {
-      const response = await fetch(`/api/reports/pdf?${params}`);
+      const response = await fetch(`/api/v1/reports/pdf?${params}`);
       if (!response.ok) throw new Error();
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
@@ -398,7 +409,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
             <p className="hint" id="amount-hint">Use a dot for decimals, e.g. 12500.50.</p>{fieldError("amount")}
           </div>
           <div className="field"><label htmlFor="description">Description</label><input ref={descriptionRef} id="description" name="description" type="text" placeholder="e.g. Groceries" value={description} onChange={(event) => { setDescription(event.target.value); clearFieldError("description"); }} aria-describedby={invalidField === "description" ? "description-error" : undefined} aria-invalid={invalidField === "description"} required />{fieldError("description")}</div>
-          <div className="field"><label htmlFor="category">Category</label><select ref={categoryRef} id="category" name="category" value={category} onChange={(event) => { setCategory(event.target.value); clearFieldError("category"); }} aria-describedby={invalidField === "category" ? "category-error" : undefined} aria-invalid={invalidField === "category"} required>{EXPENSE_CATEGORIES.map((expenseCategory) => <option key={expenseCategory} value={expenseCategory}>{expenseCategory}</option>)}</select>{fieldError("category")}</div>
+              <div className="field"><label htmlFor="category">Category</label><select ref={categoryRef} id="category" name="category" value={category} onChange={(event) => { setCategory(event.target.value); clearFieldError("category"); }} aria-describedby={invalidField === "category" ? "category-error" : undefined} aria-invalid={invalidField === "category"} required disabled={!categories.length}>{!categories.length && <option value="">No categories available</option>}{categories.map((expenseCategory) => <option key={expenseCategory} value={expenseCategory}>{expenseCategory}</option>)}</select>{fieldError("category")}</div>
           <div className="field"><label htmlFor="date">Date and time</label><input ref={dateRef} id="date" name="date" type="datetime-local" step="60" value={date} onChange={(event) => { setDate(event.target.value); clearFieldError("date"); }} aria-describedby={invalidField === "date" ? "date-error" : undefined} aria-invalid={invalidField === "date"} required />{fieldError("date")}</div>
           <div className="field proof-field"><label htmlFor="proof-files"><Paperclip size={15} aria-hidden="true" /> Proof (optional)</label>
             <input ref={proofInputRef} id="proof-files" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple

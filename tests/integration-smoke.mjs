@@ -49,6 +49,16 @@ assert.equal(anonymousMcp.status, 401);
 assert.equal((await anonymousMcp.json()).requestId, anonymousMcp.headers.get("x-mcp-request-id"));
 
 try {
+  assert.equal((await fetch(`${base}/api/expenses`, { headers: { Cookie: adminCookie } })).status, 404);
+  assert.equal((await fetch(`${base}/api/budget`, { headers: { Cookie: adminCookie } })).status, 404);
+  const categoryList = await fetch(`${base}/api/v1/categories`, { headers: authorization });
+  assert.equal(categoryList.status, 200);
+  assert.equal((await categoryList.json()).categories.length, 6);
+  const categoryCreated = await fetch(`${base}/api/v1/categories`, {
+    method: "POST", headers: { ...authorization, "Content-Type": "application/json" }, body: JSON.stringify({ name: "Education" }),
+  });
+  assert.equal(categoryCreated.status, 201);
+  const customCategory = (await categoryCreated.json()).category;
   for (let index = 0; index < 42; index += 1) {
     const response = await fetch(`${base}/api/v1/expenses`, {
       method: "POST",
@@ -72,7 +82,7 @@ try {
   });
   assert.equal(updated.status, 200);
   assert.equal((await updated.json()).expense.description, "Updated by JWT");
-  const pdfResponse = await fetch(`${base}/api/reports/pdf?q=transport&from=2026-09-24&to=2026-09-24`, { headers: { Cookie: adminCookie } });
+  const pdfResponse = await fetch(`${base}/api/v1/reports/pdf?q=transport&from=2026-09-24&to=2026-09-24`, { headers: { Cookie: adminCookie } });
   assert.equal(pdfResponse.status, 200);
   assert.match(pdfResponse.headers.get("content-type"), /application\/pdf/);
   const pdf = Buffer.from(await pdfResponse.arrayBuffer());
@@ -102,6 +112,12 @@ try {
   assert.equal(deleted.status, 200);
   const afterDelete = await fetch(`${base}/api/v1/expenses`, { headers: authorization });
   assert.equal((await afterDelete.json()).expenses.length, 41);
+  const renamedCategory = await fetch(`${base}/api/v1/categories/${customCategory.id}`, {
+    method: "PATCH", headers: { ...authorization, "Content-Type": "application/json" }, body: JSON.stringify({ name: "Learning" }),
+  });
+  assert.equal(renamedCategory.status, 200);
+  const deletedCategory = await fetch(`${base}/api/v1/categories/${customCategory.id}`, { method: "DELETE", headers: authorization });
+  assert.equal(deletedCategory.status, 200);
 
   const createdUser = await fetch(`${base}/api/users`, {
     method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },

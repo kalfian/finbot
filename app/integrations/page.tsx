@@ -4,6 +4,7 @@ import BudgetManager from "./budget-manager";
 import ThemeToggle from "../theme-toggle";
 import AccountNav from "../account-nav";
 import { requirePageUser } from "@/lib/page-auth";
+import CategoryManager from "./category-manager";
 
 export const metadata = { title: "Integrations | Expense Tracker" };
 
@@ -16,7 +17,7 @@ export default async function Integrations() {
     </header>
     <div className="integrations-heading"><p className="section-label">Settings</p><h1>Integrations</h1><p>Manage access for external tools on this device.</p></div>
     <div className="integrations-grid">
-      <div className="integration-settings"><BudgetManager /><TokenManager /></div>
+      <div className="integration-settings"><BudgetManager /><CategoryManager /><TokenManager /></div>
       <section className="integration-guide" aria-labelledby="connection-heading">
         <p className="section-label">Connect</p><h2 id="connection-heading">REST API & MCP</h2>
         <p>Use a login JWT or generated token as a Bearer credential. The web UI uses the same REST v1 contracts; REST and MCP can create, update, delete, and inspect user-owned expenses.</p>

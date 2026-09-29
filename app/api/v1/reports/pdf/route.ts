@@ -1,14 +1,14 @@
+import { requireApiAuth } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
-import { createExpenseRepository } from "@/lib/expenses";
-import { buildExpensePdf } from "@/lib/expense-report";
 import { validateReportRange } from "@/lib/expense-filters";
-import { requireSession } from "@/lib/auth";
+import { buildExpensePdf } from "@/lib/expense-report";
+import { createExpenseRepository } from "@/lib/expenses";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request): Promise<Response> {
   const database = getDatabase();
-  const auth = requireSession(request, database);
+  const auth = requireApiAuth(request, database);
   if ("response" in auth) return auth.response;
   const { searchParams } = new URL(request.url);
   const start = searchParams.get("from") ?? "";

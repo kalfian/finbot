@@ -226,6 +226,12 @@ h1 { font-size: 25px; font-weight: 760; }
 .token-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0; border-top: 1px solid var(--soft); font-size: 13px; }
 .token-list small { display: block; margin-top: 3px; color: var(--muted); }
 .token-list button { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 4px; color: var(--danger); background: var(--paper); }
+.category-cancel { display: inline-flex; align-items: center; gap: 5px; }
+.category-list { margin: 18px 0 0; padding: 0; list-style: none; }
+.category-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--soft); font-size: 13px; }
+.category-list li > div { display: flex; gap: 6px; }
+.category-list li button { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--paper); }
+.category-list li button:last-child { color: var(--danger); }
 .docs-link { display: inline-block; margin-top: 16px; color: var(--accent); font-size: 12px; font-weight: 700; }
 :root[data-theme="dark"] .view-switch button[aria-selected="true"] { box-shadow: none; }
 .docs-shell { width: min(850px, calc(100% - 40px)); margin: 0 auto; padding: 35px 0 80px; }

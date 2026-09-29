@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import Module from "node:module";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -190,7 +189,7 @@ test("POST creates an expense and GET returns the JSON list", async () => {
   const { database, repository } = createTestRepository();
   try {
     const createResponse = await postExpense(
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -230,52 +229,52 @@ test("POST rejects invalid input without creating an expense", async () => {
   const { database, repository } = createTestRepository();
   try {
     const requests = [
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{",
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 100 }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Unknown", date: "2026-02-14T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 1.5, description: "Fraction", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: Number.MAX_SAFE_INTEGER + 1, description: "Unsafe", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 0, description: "Free", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: -100, description: "Refund", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 100, description: "   ", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 100, description: "Impossible date", category: "Food", date: "2026-02-30T08:30:00.000Z" }),
       }),
-      new Request("http://localhost/api/expenses", {
+      new Request("http://localhost/api/v1/expenses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(["not", "an", "object"]),
@@ -304,7 +303,7 @@ test("PATCH updates an expense and returns validation and not-found errors", asy
       date: "2026-02-14T08:30:00.000Z",
     });
     const response = await patchExpense(
-      new Request(`http://localhost/api/expenses/${created.id}`, {
+      new Request(`http://localhost/api/v1/expenses/${created.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ amountCents: 2500, description: "Dinner", category: "Food", date: "2026-02-14T12:30:00.000Z" }),
@@ -318,14 +317,14 @@ test("PATCH updates an expense and returns validation and not-found errors", asy
     });
 
     const invalid = await patchExpense(
-      new Request(`http://localhost/api/expenses/${created.id}`, { method: "PATCH", body: JSON.stringify({ amountCents: 0 }) }),
+      new Request(`http://localhost/api/v1/expenses/${created.id}`, { method: "PATCH", body: JSON.stringify({ amountCents: 0 }) }),
       created.id,
       repository,
     );
     assert.equal(invalid.status, 400);
 
     const missing = await patchExpense(
-      new Request("http://localhost/api/expenses/999", {
+      new Request("http://localhost/api/v1/expenses/999", {
         method: "PATCH",
         body: JSON.stringify({ amountCents: 2500, description: "Dinner", category: "Food", date: "2026-02-14T12:30:00.000Z" }),
       }),
@@ -356,7 +355,7 @@ test("API returns a generic error when persistence fails", async () => {
   };
 
   const createResponse = await postExpense(
-    new Request("http://localhost/api/expenses", {
+    new Request("http://localhost/api/v1/expenses", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
@@ -375,7 +374,7 @@ test("API returns a generic error when persistence fails", async () => {
   });
 
   const updateResponse = await patchExpense(
-    new Request("http://localhost/api/expenses/1", {
+    new Request("http://localhost/api/v1/expenses/1", {
       method: "PATCH",
       body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
     }),
@@ -392,57 +391,4 @@ test("API returns a generic error when persistence fails", async () => {
   assert.deepEqual(await deleteResponse.json(), {
     error: "We couldn't delete this expense. Please try again.",
   });
-});
-
-test("route handlers return generic errors when database setup fails", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "ledger-route-"));
-  const blockedDirectory = join(directory, "not-a-directory");
-  const originalDatabasePath = process.env.DATABASE_PATH;
-  const moduleWithResolver = Module as unknown as {
-    _resolveFilename: (
-      request: string,
-      parent: unknown,
-      isMain: boolean,
-      options: unknown,
-    ) => string;
-  };
-  const originalResolveFilename = moduleWithResolver._resolveFilename;
-  writeFileSync(blockedDirectory, "");
-  process.env.DATABASE_PATH = join(blockedDirectory, "expenses.db");
-  moduleWithResolver._resolveFilename = (request, parent, isMain, options) => {
-    if (request === "server-only") {
-      return join(process.cwd(), "node_modules/next/dist/compiled/server-only/empty.js");
-    }
-    return originalResolveFilename(request, parent, isMain, options);
-  };
-
-  try {
-    const { GET, POST } = await import("../app/api/expenses/route");
-
-    const getResponse = GET(new Request("http://localhost/api/expenses"));
-    assert.equal(getResponse.status, 500);
-    assert.deepEqual(await getResponse.json(), {
-      error: "We couldn't load expenses. Please try again.",
-    });
-
-    const postResponse = await POST(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
-      }),
-    );
-    assert.equal(postResponse.status, 500);
-    assert.deepEqual(await postResponse.json(), {
-      error: "We couldn't save this expense. Please try again.",
-    });
-  } finally {
-    moduleWithResolver._resolveFilename = originalResolveFilename;
-    if (originalDatabasePath === undefined) {
-      delete process.env.DATABASE_PATH;
-    } else {
-      process.env.DATABASE_PATH = originalDatabasePath;
-    }
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
