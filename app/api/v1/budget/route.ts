@@ -6,10 +6,12 @@ export const runtime = "nodejs";
 
 export function GET(request: Request): Response {
   const database = getDatabase();
-  return requireToken(request, database) ?? getBudget(request, database);
+  const auth = requireToken(request, database);
+  return "response" in auth ? auth.response : getBudget(request, database, auth.user.id);
 }
 
 export async function PUT(request: Request): Promise<Response> {
   const database = getDatabase();
-  return requireToken(request, database) ?? putBudget(request, database);
+  const auth = requireToken(request, database);
+  return "response" in auth ? auth.response : putBudget(request, database, auth.user.id);
 }

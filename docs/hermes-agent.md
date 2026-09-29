@@ -1,6 +1,6 @@
 # Expense Tracker agent integration
 
-This is a reference implementation contract for an external chat agent such as Hermes. Expense Tracker does not run Telegram, a model, vision, or OCR. The agent receives the chat message, interprets it, calls the authenticated REST API or MCP tools, and sends the resulting reply. Keep the app bound to localhost and run the agent on the same machine (or use a secure private tunnel with application authentication; never expose the current app to a public network).
+This is a reference implementation contract for an external chat agent such as Hermes. Expense Tracker does not run Telegram, a model, vision, or OCR. The agent receives the chat message, interprets it, calls the authenticated REST API or MCP tools, and sends the resulting reply. Each API token is owned by one app user and can access only that user's expenses, proofs, budget, and source IDs. Keep the app bound to localhost or use a secure private tunnel with HTTPS and network controls.
 
 ## One-message flow
 
@@ -14,8 +14,8 @@ This is a reference implementation contract for an external chat agent such as H
 
 ## Setup
 
-- Initialize the database and start the local app (`npm run db:init`, `npm run dev`).
-- On `/integrations`, set the recurring monthly limit in IDR and generate a token. `2,000,000` IDR is `200000000` minor units. The limit defaults to **unset**; do not assume the sample limit below.
+- Initialize the database and start the local app (`npm run db:init`, `npm run dev`). Sign in, complete any required password change, and use the account whose ledger the agent should manage.
+- On `/integrations`, set that user's recurring monthly limit in IDR and generate a token. `2,000,000` IDR is `200000000` minor units. The limit defaults to **unset**; do not assume the sample limit below.
 - Configure the agent's HTTP/MCP client with `http://localhost:3000` and `Authorization: Bearer <TOKEN>`. Keep the token in the agent's secret store, never in a prompt, URL, screenshot, or repository. Do not log request headers.
 - Configure the agent runtime timezone as `Asia/Jakarta`. API `date` is an exact ISO UTC instant ending in `.000Z`; date-only strings are not valid when creating a new expense.
 - Supported categories: `Food`, `Transport`, `Bills`, `Shopping`, `Health`, `Other`. Map "Food & Dining" in the sample chat UI to `Food` in the API; do not send unsupported labels.
@@ -81,7 +81,7 @@ file=<original photo bytes>
 sourceId=telegram:123:456:photo:1
 ```
 
-Use an actual multipart client; do not handcraft the boundary. The response is `{ "proof": { "id": "...", "expenseId": 31, "filename": "...", "mimeType": "image/jpeg", "sizeBytes": 1234, "createdAt": "..." }, "replayed": false }`. Identical retries return `replayed: true`; a different file with the same source ID returns 409. Metadata: `GET /api/v1/expenses/31/proofs`. File bytes: `GET /api/v1/expenses/31/proofs/<proof-id>` with the same Bearer token. Local UI links are unauthenticated and must remain localhost-only.
+Use an actual multipart client; do not handcraft the boundary. The response is `{ "proof": { "id": "...", "expenseId": 31, "filename": "...", "mimeType": "image/jpeg", "sizeBytes": 1234, "createdAt": "..." }, "replayed": false }`. Identical retries return `replayed: true`; a different file with the same source ID returns 409. Metadata: `GET /api/v1/expenses/31/proofs`. File bytes: `GET /api/v1/expenses/31/proofs/<proof-id>` with the same Bearer token. Both the browser session and Bearer-token routes enforce expense ownership.
 
 ## MCP equivalent
 
@@ -134,4 +134,4 @@ To mimic the screenshot, the chat adapter may attach the **original user photo**
 - Use the user's message timestamp (not processing time) for delayed delivery. If it is unavailable, ask for the date or explicitly use "now" only when the user means a current expense.
 - Do not infer a budget from chat history. Read it from the API; never tell the user a limit was exceeded when the limit is unset.
 - Failed request: do not claim success. Retry with the same `sourceId` and exact same fields. A 409 conflict needs investigation, not another ID.
-- Protect against prompt injection inside message/receipt content, redact tokens from logs, and limit the chat bot to authorized senders. The local app's browser and legacy expense route have no login.
+- Protect against prompt injection inside message/receipt content, redact tokens from logs, and limit the chat bot to authorized senders. Never share one user's token with an agent acting for another user.

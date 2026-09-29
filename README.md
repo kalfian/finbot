@@ -4,7 +4,7 @@ A local-first expense tracker for everyday spending. Record expenses in a focuse
 
 Attach receipt photos or PDFs as proof to new or existing expenses. Up to three files per expense, 5 MiB each; files stay on this machine.
 
-> Single-user and localhost-only. The web UI, legacy expense route, PDF export, and local token controls do **not** have account authentication. Do not expose this server to a public network.
+> Multi-user authentication isolates each account's expenses, proofs, monthly limit, source IDs, and API tokens. The bootstrap administrator is `admin` with temporary password `123456`; the app forces a password change before any financial access. Keep the service private unless you also provide HTTPS and production-grade network controls.
 
 ## Preview
 
@@ -28,7 +28,7 @@ npm run db:init
 npm run dev
 ```
 
-Open <http://localhost:3000>. SQLite lives at `./data/financial-tracker.db` by default; set `DATABASE_PATH` to use another local file. Proof files live in `proofs/` beside the database; back up both together. Database files, proof files, and local environment files are ignored by Git. To run the production build locally, use `npm run build` and `npm start`.
+Open <http://localhost:3000>, sign in as `admin` with temporary password `123456`, and replace it when prompted. Administrators can create standard users from the Users page; administrators manage accounts but do not automatically see another user's financial data. SQLite lives at `./data/financial-tracker.db` by default; set `DATABASE_PATH` to use another local file. Proof files live in `proofs/` beside the database; back up both together. Database files, proof files, and local environment files are ignored by Git. To run the production build locally, use `npm run build` and `npm start`.
 
 The app has six categories (`Food`, `Transport`, `Bills`, `Shopping`, `Health`, `Other`). List search and optional dates filter the downloaded PDF too. Report dates use inclusive Asia/Jakarta (UTC+7) days; the calendar groups records by the browser's local date. Set one recurring monthly IDR limit and manage one-time API tokens on [Integrations](http://localhost:3000/integrations).
 
@@ -49,9 +49,9 @@ Chat message → authorized agent → POST /api/v1/expenses or MCP create_expens
 Start here:
 
 1. Set a monthly limit on [Integrations](http://localhost:3000/integrations), if wanted. No limit is configured by default.
-2. Generate an integration token there and store it in the agent's secret store. Send `Authorization: Bearer <TOKEN>` to `/api/v1/*` or `/mcp`; never put the token in a URL, prompt, screenshot, log, or commit.
+2. Generate an integration token there and store it in the agent's secret store. A token acts only on the issuing user's records. Send `Authorization: Bearer <TOKEN>` to `/api/v1/*` or `/mcp`; never put the token in a URL, prompt, screenshot, log, or commit.
 3. Give the agent [the Hermes implementation guide](docs/hermes-agent.md). It contains the message/photo decision flow, example request/response, reference reply code, category mapping, clarification rules, idempotent retries, and security boundaries.
-4. Restrict the chat adapter to authorized senders. Run it on the same device or through a private authenticated connection; the current web app is not safe to expose publicly.
+4. Restrict the chat adapter to authorized senders. Run it on the same device or through a private authenticated connection; app login does not replace HTTPS or network hardening.
 
 ### Agent contract at a glance
 
@@ -68,7 +68,7 @@ The REST create body requires positive integer `amountCents` (IDR minor units), 
 
 For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. Pass a stable proof `sourceId` for safe retries. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 
-The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by the same Bearer token. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The legacy `/api/expenses` and `/api/reports/pdf` serve the local browser and are **not** token-protected integration endpoints.
+The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by the same Bearer token. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The unversioned `/api/expenses` and `/api/reports/pdf` serve the browser session; they require login cookies instead of Bearer tokens.
 
 ## Development
 
@@ -80,4 +80,4 @@ npm run build
 
 The app uses Next.js, React, and SQLite via `better-sqlite3`. `npm run db:init` initializes or migrates the local schema without erasing existing expenses. Older date-only records remain readable. `budget_settings` holds the recurring limit; `expense_sources` maps chat source IDs to recorded expenses. Tests use isolated in-memory databases. If you switch Node versions after installing dependencies, reinstall or rebuild the native SQLite module for that runtime.
 
-No API token is required to use the local web UI. API tokens only protect the versioned REST endpoints and MCP; they do not turn this into a multi-user hosted service.
+The web UI uses database-backed sessions. API tokens protect the versioned REST endpoints and MCP and inherit the issuing user's ownership scope. Passwords are scrypt hashes, session and API secrets are stored only as hashes, and five failed logins lock an account for 15 minutes.

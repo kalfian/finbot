@@ -20,13 +20,13 @@ export function sameOrigin(request: Request): boolean {
   return (!origin || origin === new URL(request.url).origin) && (!site || site === "same-origin" || site === "none");
 }
 
-export function getProofList(database: Database.Database, rawId: string): Response {
+export function getProofList(database: Database.Database, userId: number, rawId: string): Response {
   try {
-    return Response.json({ proofs: listProofs(database, expenseId(rawId)) }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ proofs: listProofs(database, userId, expenseId(rawId)) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return proofFailure(error); }
 }
 
-export async function postProof(request: Request, database: Database.Database, rawId: string): Promise<Response> {
+export async function postProof(request: Request, database: Database.Database, userId: number, rawId: string): Promise<Response> {
   try {
     const id = expenseId(rawId);
     if (!request.headers.get("content-type")?.startsWith("multipart/form-data;")) {
@@ -58,15 +58,15 @@ export async function postProof(request: Request, database: Database.Database, r
     if (!(file instanceof File)) throw new ProofError("Select one proof file.", 400);
     const sourceId = form.get("sourceId");
     if (sourceId !== null && typeof sourceId !== "string") throw new ProofError("sourceId must be text.", 400);
-    const { proof, replayed } = await saveProof(database, id, file, undefined, sourceId ?? undefined);
+    const { proof, replayed } = await saveProof(database, userId, id, file, undefined, sourceId ?? undefined);
     return Response.json({ proof, replayed }, { status: replayed ? 200 : 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) { return proofFailure(error); }
 }
 
-export function getProofFile(database: Database.Database, rawId: string, proofId: string): Response {
+export function getProofFile(database: Database.Database, userId: number, rawId: string, proofId: string): Response {
   try {
     if (!/^[0-9a-f-]{36}$/.test(proofId)) throw new ProofError("Proof not found.", 404);
-    const { proof, bytes } = readProof(database, expenseId(rawId), proofId);
+    const { proof, bytes } = readProof(database, userId, expenseId(rawId), proofId);
     return new Response(new Uint8Array(bytes), { headers: {
       "Content-Type": proof.mimeType,
       "Content-Length": String(bytes.length),

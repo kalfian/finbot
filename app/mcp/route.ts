@@ -14,17 +14,17 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
   const database = getDatabase();
-  const denied = requireToken(request, database);
-  if (denied) return denied;
-  return handleExpenseMcp(request, database);
+  const auth = requireToken(request, database);
+  if ("response" in auth) return auth.response;
+  return handleExpenseMcp(request, database, auth.user.id);
 }
 
 export function GET(request: Request): Response {
-  const denied = requireToken(request, getDatabase());
-  return denied ?? new Response(null, { status: 405, headers: { Allow: "POST" } });
+  const auth = requireToken(request, getDatabase());
+  return "response" in auth ? auth.response : new Response(null, { status: 405, headers: { Allow: "POST" } });
 }
 
 export function DELETE(request: Request): Response {
-  const denied = requireToken(request, getDatabase());
-  return denied ?? new Response(null, { status: 405, headers: { Allow: "POST" } });
+  const auth = requireToken(request, getDatabase());
+  return "response" in auth ? auth.response : new Response(null, { status: 405, headers: { Allow: "POST" } });
 }

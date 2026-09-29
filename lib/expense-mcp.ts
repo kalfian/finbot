@@ -10,9 +10,9 @@ import { validateExpense } from "./expense-api";
 import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
 import { listProofs, ProofError, readProof, saveProof } from "./expense-proofs";
 
-export function createExpenseMcpServer(database: Database.Database, proofDirectory?: string): McpServer {
+export function createExpenseMcpServer(database: Database.Database, userId: number, proofDirectory?: string): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
-  const repository = createExpenseRepository(database);
+  const repository = createExpenseRepository(database, userId);
   const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
   server.registerTool("list_expenses", {
     title: "List expenses",
@@ -41,7 +41,7 @@ export function createExpenseMcpServer(database: Database.Database, proofDirecto
     if ("error" in validation) return { isError: true, ...result({ error: validation.error }) };
     try {
       const { expense: created, replayed } = repository.record(validation.value, expense.sourceId);
-      return result({ expense: created, replayed, budget: budgetSnapshot(database, created.date) });
+      return result({ expense: created, replayed, budget: budgetSnapshot(database, userId, created.date) });
     } catch (error) {
       return { isError: true, ...result({ error: error instanceof Error ? error.message : "Expense could not be saved." }) };
     }
@@ -51,7 +51,7 @@ export function createExpenseMcpServer(database: Database.Database, proofDirecto
     description: "List receipt/photo metadata attached to an expense.",
     inputSchema: { expenseId: z.number().int().positive().safe() },
   }, async ({ expenseId }) => {
-    try { return result({ proofs: listProofs(database, expenseId) }); }
+    try { return result({ proofs: listProofs(database, userId, expenseId) }); }
     catch (error) { return { isError: true, ...result({ error: error instanceof Error ? error.message : "Proofs unavailable." }) }; }
   });
   server.registerTool("attach_expense_proof", {
@@ -70,7 +70,7 @@ export function createExpenseMcpServer(database: Database.Database, proofDirecto
     }
     try {
       const file = new File([Buffer.from(base64, "base64")], filename, { type: mimeType });
-      const saved = await saveProof(database, expenseId, file, proofDirectory, sourceId);
+      const saved = await saveProof(database, userId, expenseId, file, proofDirectory, sourceId);
       return result(saved);
     } catch (error) {
       return { isError: true, ...result({ error: error instanceof ProofError ? error.message : "Proof could not be saved." }) };
@@ -82,7 +82,7 @@ export function createExpenseMcpServer(database: Database.Database, proofDirecto
     inputSchema: { expenseId: z.number().int().positive().safe(), proofId: z.string().uuid() },
   }, async ({ expenseId, proofId }) => {
     try {
-      const { proof, bytes } = readProof(database, expenseId, proofId, proofDirectory);
+      const { proof, bytes } = readProof(database, userId, expenseId, proofId, proofDirectory);
       return { content: [{ type: "resource", resource: {
         uri: `expense-tracker://expenses/${expenseId}/proofs/${proof.id}`, mimeType: proof.mimeType, blob: Buffer.from(bytes).toString("base64"),
       } }] };
@@ -96,15 +96,15 @@ export function createExpenseMcpServer(database: Database.Database, proofDirecto
     inputSchema: { date: z.string().default("") },
   }, async ({ date }) => {
     if (date && !validBudgetDate(date)) return { isError: true, ...result({ error: "date must be YYYY-MM-DD." }) };
-    return result(budgetSnapshot(database, date || new Date().toISOString()));
+    return result(budgetSnapshot(database, userId, date || new Date().toISOString()));
   });
   server.registerTool("set_monthly_limit", {
     title: "Set monthly limit",
     description: "Set one recurring monthly spending limit in positive integer IDR minor units; null clears it. Changes the limit, not expenses.",
     inputSchema: { monthlyLimitCents: z.number().int().positive().safe().nullable() },
   }, async ({ monthlyLimitCents }) => {
-    createBudgetRepository(database).setMonthlyLimitCents(monthlyLimitCents);
-    return result(budgetSnapshot(database));
+    createBudgetRepository(database, userId).setMonthlyLimitCents(monthlyLimitCents);
+    return result(budgetSnapshot(database, userId));
   });
   server.registerTool("expense_summary", {
     title: "Expense summary",
@@ -144,9 +144,9 @@ export function createExpenseMcpServer(database: Database.Database, proofDirecto
   return server;
 }
 
-export async function handleExpenseMcp(request: Request, database: Database.Database, proofDirectory?: string): Promise<Response> {
+export async function handleExpenseMcp(request: Request, database: Database.Database, userId: number, proofDirectory?: string): Promise<Response> {
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
-  const server = createExpenseMcpServer(database, proofDirectory);
+  const server = createExpenseMcpServer(database, userId, proofDirectory);
   await server.connect(transport);
   try {
     return await transport.handleRequest(request);

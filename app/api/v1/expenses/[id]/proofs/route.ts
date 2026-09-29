@@ -7,10 +7,12 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, { params }: Context): Promise<Response> {
   const database = getDatabase();
-  return requireToken(request, database) ?? getProofList(database, (await params).id);
+  const auth = requireToken(request, database);
+  return "response" in auth ? auth.response : getProofList(database, auth.user.id, (await params).id);
 }
 
 export async function POST(request: Request, { params }: Context): Promise<Response> {
   const database = getDatabase();
-  return requireToken(request, database) ?? postProof(request, database, (await params).id);
+  const auth = requireToken(request, database);
+  return "response" in auth ? auth.response : postProof(request, database, auth.user.id, (await params).id);
 }

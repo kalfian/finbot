@@ -1,13 +1,19 @@
-import { requireLocalOwner } from "@/lib/api-tokens";
+import { requireSameOrigin, requireSession } from "@/lib/auth";
 import { getBudget, putBudget } from "@/lib/budget-api";
 import { getDatabase } from "@/lib/db";
 
 export const runtime = "nodejs";
 
 export function GET(request: Request): Response {
-  return requireLocalOwner(request) ?? getBudget(request, getDatabase());
+  const database = getDatabase();
+  const auth = requireSession(request, database);
+  return "response" in auth ? auth.response : getBudget(request, database, auth.user.id);
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  return requireLocalOwner(request) ?? putBudget(request, getDatabase());
+  const denied = requireSameOrigin(request);
+  if (denied) return denied;
+  const database = getDatabase();
+  const auth = requireSession(request, database);
+  return "response" in auth ? auth.response : putBudget(request, database, auth.user.id);
 }

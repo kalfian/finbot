@@ -26,6 +26,12 @@ export function getBrowserLocalDateTime(now: Date = new Date()): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+export function amountCentsToInput(amountCents: number): string {
+  const whole = Math.floor(amountCents / 100);
+  const cents = amountCents % 100;
+  return cents ? `${whole}.${String(cents).padStart(2, "0")}` : String(whole);
+}
+
 /** Converts a datetime-local value from the browser's timezone into an ISO UTC instant. */
 export function localDateTimeToUtc(value: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
@@ -104,6 +110,25 @@ export async function saveExpense(
   const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
     ? body.error
     : "We couldn't save this expense. Please try again.";
+  throw new Error(message);
+}
+
+export async function updateExpense(
+  id: number,
+  expense: NewExpenseRequest,
+  fetchImplementation: FetchImplementation = fetch,
+): Promise<void> {
+  const response = await fetchImplementation(`/api/expenses/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(expense),
+  });
+  if (response.ok) return;
+
+  const body: unknown = await response.json().catch(() => null);
+  const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+    ? body.error
+    : "We couldn't update this expense. Please try again.";
   throw new Error(message);
 }
 

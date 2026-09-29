@@ -2,14 +2,17 @@ import Link from "next/link";
 import TokenManager from "./token-manager";
 import BudgetManager from "./budget-manager";
 import ThemeToggle from "../theme-toggle";
+import AccountNav from "../account-nav";
+import { requirePageUser } from "@/lib/page-auth";
 
 export const metadata = { title: "Integrations | Expense Tracker" };
 
-export default function Integrations() {
+export default async function Integrations() {
+  const user = await requirePageUser();
   return <main className="integrations-shell">
     <header className="site-header">
       <Link className="wordmark" href="/"><span className="wordmark-rule" aria-hidden="true" /><span>Expense Tracker</span></Link>
-      <div className="header-actions"><ThemeToggle /><Link href="/" className="header-link">Back to activity</Link></div>
+      <div className="header-actions"><ThemeToggle /><Link href="/" className="header-link">Back to activity</Link><AccountNav username={user.username} role={user.role} /></div>
     </header>
     <div className="integrations-heading"><p className="section-label">Settings</p><h1>Integrations</h1><p>Manage access for external tools on this device.</p></div>
     <div className="integrations-grid">

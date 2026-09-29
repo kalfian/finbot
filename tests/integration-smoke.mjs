@@ -5,8 +5,35 @@ const base = process.env.TEST_BASE_URL || "http://127.0.0.1:3341";
 const pdfPath = process.env.TEST_PDF_PATH;
 assert.ok(pdfPath, "Set TEST_PDF_PATH to a temporary PDF path.");
 
+function cookieOf(response) {
+  const value = response.headers.get("set-cookie");
+  assert.ok(value);
+  return value.split(";", 1)[0];
+}
+
+async function login(username, password) {
+  const response = await fetch(`${base}/api/auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }),
+  });
+  assert.equal(response.status, 200);
+  return cookieOf(response);
+}
+
+async function changePassword(cookie, currentPassword, newPassword) {
+  const response = await fetch(`${base}/api/auth/password`, {
+    method: "PUT", headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  assert.equal(response.status, 200);
+  return cookieOf(response);
+}
+
+const temporaryAdminCookie = await login("admin", "123456");
+assert.equal((await fetch(`${base}/api/expenses`, { headers: { Cookie: temporaryAdminCookie } })).status, 403);
+const adminCookie = await changePassword(temporaryAdminCookie, "123456", "smoke-admin-123");
+
 const issuedResponse = await fetch(`${base}/api/tokens`, {
-  method: "POST", headers: { "Content-Type": "application/json" },
+  method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
   body: JSON.stringify({ label: "Temporary smoke test" }),
 });
 assert.equal(issuedResponse.status, 201);
@@ -35,7 +62,7 @@ try {
   assert.equal(listed.status, 200);
   const { expenses } = await listed.json();
   assert.equal(expenses.length, 42);
-  const pdfResponse = await fetch(`${base}/api/reports/pdf?q=transport&from=2026-09-24&to=2026-09-24`);
+  const pdfResponse = await fetch(`${base}/api/reports/pdf?q=transport&from=2026-09-24&to=2026-09-24`, { headers: { Cookie: adminCookie } });
   assert.equal(pdfResponse.status, 200);
   assert.match(pdfResponse.headers.get("content-type"), /application\/pdf/);
   const pdf = Buffer.from(await pdfResponse.arrayBuffer());
@@ -47,11 +74,22 @@ try {
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
   assert.equal(mcp.status, 200);
-  assert.equal((await mcp.json()).result.tools.length, 4);
-  console.log(JSON.stringify({ listed: expenses.length, pdfBytes: pdf.length, mcp: "authenticated" }));
+  assert.equal((await mcp.json()).result.tools.length, 9);
+
+  const createdUser = await fetch(`${base}/api/users`, {
+    method: "POST", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "smoke-user", password: "temporary123" }),
+  });
+  assert.equal(createdUser.status, 201);
+  const temporaryUserCookie = await login("smoke-user", "temporary123");
+  const userCookie = await changePassword(temporaryUserCookie, "temporary123", "smoke-user-123");
+  const userLedger = await fetch(`${base}/api/expenses`, { headers: { Cookie: userCookie } });
+  assert.equal(userLedger.status, 200);
+  assert.deepEqual((await userLedger.json()).expenses, []);
+  console.log(JSON.stringify({ listed: expenses.length, pdfBytes: pdf.length, mcp: "authenticated", userIsolation: "verified" }));
 } finally {
   const revoked = await fetch(`${base}/api/tokens`, {
-    method: "DELETE", headers: { "Content-Type": "application/json" },
+    method: "DELETE", headers: { Cookie: adminCookie, "Content-Type": "application/json" },
     body: JSON.stringify({ id: issued.id }),
   });
   assert.equal(revoked.status, 200);

@@ -51,8 +51,8 @@ function filenameOf(value: string): string {
   return value.replaceAll("\\", "/").split("/").at(-1)?.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 120) || "proof";
 }
 
-export function listProofs(database: Database.Database, expenseId: number): ExpenseProof[] {
-  if (!database.prepare("SELECT id FROM expenses WHERE id = ?").get(expenseId)) {
+export function listProofs(database: Database.Database, userId: number, expenseId: number): ExpenseProof[] {
+  if (!database.prepare("SELECT id FROM expenses WHERE id = ? AND user_id = ?").get(expenseId, userId)) {
     throw new ProofError("Expense not found.", 404);
   }
   return (database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? ORDER BY created_at, id")
@@ -61,6 +61,7 @@ export function listProofs(database: Database.Database, expenseId: number): Expe
 
 export async function saveProof(
   database: Database.Database,
+  userId: number,
   expenseId: number,
   file: File,
   directory = proofsDirectory(),
@@ -76,15 +77,15 @@ export async function saveProof(
   if (!type || file.type !== type.mimeType) {
     throw new ProofError("Proof must be a JPEG, PNG, WebP, or PDF file.", 400);
   }
+  if (!database.prepare("SELECT id FROM expenses WHERE id = ? AND user_id = ?").get(expenseId, userId)) {
+    throw new ProofError("Expense not found.", 404);
+  }
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const existing = sourceId && database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? AND source_id = ?")
     .get(expenseId, sourceId) as ProofRow | undefined;
   if (existing) {
     if (existing.sha256 !== sha256) throw new ProofError("sourceId already belongs to a different proof.", 409);
     return { proof: toProof(existing), replayed: true };
-  }
-  if (!database.prepare("SELECT id FROM expenses WHERE id = ?").get(expenseId)) {
-    throw new ProofError("Expense not found.", 404);
   }
   const count = database.prepare("SELECT COUNT(*) AS count FROM expense_proofs WHERE expense_id = ?")
     .get(expenseId) as { count: number };
@@ -105,10 +106,13 @@ export async function saveProof(
   return { proof: toProof(database.prepare("SELECT * FROM expense_proofs WHERE id = ?").get(id) as ProofRow), replayed: false };
 }
 
-export function readProof(database: Database.Database, expenseId: number, proofId: string, directory = proofsDirectory()):
+export function readProof(database: Database.Database, userId: number, expenseId: number, proofId: string, directory = proofsDirectory()):
   { proof: ExpenseProof; bytes: Uint8Array } {
-  const row = database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? AND id = ?")
-    .get(expenseId, proofId) as ProofRow | undefined;
+  const row = database.prepare(`
+    SELECT expense_proofs.* FROM expense_proofs
+    JOIN expenses ON expenses.id = expense_proofs.expense_id
+    WHERE expense_proofs.expense_id = ? AND expense_proofs.id = ? AND expenses.user_id = ?
+  `).get(expenseId, proofId, userId) as ProofRow | undefined;
   if (!row) throw new ProofError("Proof not found.", 404);
   const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf" }[row.mime_type];
   if (!extension) throw new Error("Invalid stored proof type.");

@@ -6,8 +6,8 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string; proofId: string }> }): Promise<Response> {
   const database = getDatabase();
-  const denied = requireToken(request, database);
-  if (denied) return denied;
+  const auth = requireToken(request, database);
+  if ("response" in auth) return auth.response;
   const { id, proofId } = await params;
-  return getProofFile(database, id, proofId);
+  return getProofFile(database, auth.user.id, id, proofId);
 }

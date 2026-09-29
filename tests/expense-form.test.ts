@@ -6,10 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import ExpenseTracker from "../app/expense-tracker";
 import nextConfig from "../next.config";
-import { getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, validateExpenseForm } from "../lib/expense-form";
+import { amountCentsToInput, getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, updateExpense, validateExpenseForm } from "../lib/expense-form";
 
 test("the tracker is a focused expense page with a browser-local datetime default", () => {
-  const markup = renderToStaticMarkup(createElement(ExpenseTracker));
+  const markup = renderToStaticMarkup(createElement(ExpenseTracker, { user: { username: "tester", role: "user" } }));
   const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
 
   assert.doesNotMatch(markup, /<nav\b/);
@@ -37,16 +37,22 @@ test("localDateTimeToUtc converts the browser-local datetime before persistence"
   assert.equal(localDateTimeToUtc("2026-02-30T09:07"), null);
 });
 
+test("amountCentsToInput creates an editable decimal amount", () => {
+  assert.equal(amountCentsToInput(1500), "15");
+  assert.equal(amountCentsToInput(1550), "15.50");
+  assert.equal(amountCentsToInput(1501), "15.01");
+});
+
 test("the dev server permits the browser and workspace proxy to load client assets", () => {
   assert.deepEqual(nextConfig.allowedDevOrigins, ["127.0.0.1", "10.20.30.105"]);
 });
 
 test("the expense form uses the client submit handler without a native action", () => {
-  const markup = renderToStaticMarkup(createElement(ExpenseTracker));
+  const markup = renderToStaticMarkup(createElement(ExpenseTracker, { user: { username: "tester", role: "user" } }));
   const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
   const pageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-  assert.doesNotMatch(markup, /<form\b[^>]*\saction=/);
+  assert.match(markup, /<form noValidate="">/);
   assert.match(source, /^"use client";/);
   assert.match(pageSource, /import ExpenseTracker from "\.\/expense-tracker";/);
   assert.match(source, /<form onSubmit=\{handleSubmit\} onReset=\{handleReset\} noValidate>/);
@@ -112,4 +118,31 @@ test("saveExpense posts the request and handles success and API errors", async (
     saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, malformedErrorFetch),
     { message: "We couldn't save this expense. Please try again." },
   );
+});
+
+test("updateExpense patches the selected expense and handles API errors", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const successfulFetch: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ expense: { id: 7 } }), { status: 200 });
+  };
+  const expense = { amountCents: 2500, description: "Dinner", category: "Food" as const, date: "2026-02-14T12:30:00.000Z" };
+
+  await updateExpense(7, expense, successfulFetch);
+  assert.equal(calls[0].input, "/api/expenses/7");
+  assert.equal(calls[0].init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(calls[0].init?.body as string), expense);
+
+  const failingFetch: typeof fetch = async () => new Response(JSON.stringify({ error: "Expense not found." }), { status: 404 });
+  await assert.rejects(updateExpense(7, expense, failingFetch), { message: "Expense not found." });
+});
+
+test("the tracker exposes edit actions and an explicit edit mode", () => {
+  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /startEditing\(expense\)/);
+  assert.match(source, /Edit expense/);
+  assert.match(source, /Save changes/);
+  assert.match(source, /Cancel editing/);
+  assert.match(source, /onClick=\{startAdding\}/);
 });

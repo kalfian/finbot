@@ -9,21 +9,21 @@ export const runtime = "nodejs";
 
 export function GET(request: Request): Response {
   const database = getDatabase();
-  const denied = requireToken(request, database);
-  if (denied) return denied;
+  const auth = requireToken(request, database);
+  if ("response" in auth) return auth.response;
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("q") ?? "";
   const start = searchParams.get("from") ?? "";
   const end = searchParams.get("to") ?? "";
   if (!validateReportRange(start, end)) return Response.json({ error: "Choose a valid date range." }, { status: 400 });
-  if (!query && !start && !end) return getExpenses(createExpenseRepository(database));
-  return Response.json({ expenses: filterReportExpenses(createExpenseRepository(database).list(), { query, start, end }) });
+  if (!query && !start && !end) return getExpenses(createExpenseRepository(database, auth.user.id));
+  return Response.json({ expenses: filterReportExpenses(createExpenseRepository(database, auth.user.id).list(), { query, start, end }) });
 }
 
 export async function POST(request: Request): Promise<Response> {
   const database = getDatabase();
-  const denied = requireToken(request, database);
-  if (denied) return denied;
+  const auth = requireToken(request, database);
+  if ("response" in auth) return auth.response;
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "Request body must be valid JSON." }, { status: 400 }); }
   const validation = validateExpense(body);
@@ -33,8 +33,8 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "sourceId must contain 1-200 characters." }, { status: 400 });
   }
   try {
-    const { expense, replayed } = createExpenseRepository(database).record(validation.value, sourceId as string | undefined);
-    return Response.json({ expense, replayed, budget: budgetSnapshot(database, expense.date) },
+    const { expense, replayed } = createExpenseRepository(database, auth.user.id).record(validation.value, sourceId as string | undefined);
+    return Response.json({ expense, replayed, budget: budgetSnapshot(database, auth.user.id, expense.date) },
       { status: replayed ? 200 : 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error && error.message.startsWith("sourceId") ? error.message : "We couldn't save this expense." },

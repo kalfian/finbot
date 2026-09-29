@@ -1,62 +1,52 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type Database from "better-sqlite3";
+import type { AuthUser } from "./auth";
 
 type TokenRow = { id: number; label: string; created_at: string };
 
 export type TokenInfo = { id: number; label: string; createdAt: string };
 
-export function createTokenRepository(database: Database.Database) {
-  const list = database.prepare("SELECT id, label, created_at FROM api_tokens ORDER BY id DESC");
-  const insert = database.prepare("INSERT INTO api_tokens (label, token_hash, created_at) VALUES (?, ?, ?)");
-  const lookup = database.prepare("SELECT token_hash FROM api_tokens WHERE token_hash = ?");
-  const remove = database.prepare("DELETE FROM api_tokens WHERE id = ?");
+export function createTokenRepository(database: Database.Database, userId: number) {
+  const list = database.prepare("SELECT id, label, created_at FROM api_tokens WHERE user_id = ? ORDER BY id DESC");
+  const insert = database.prepare("INSERT INTO api_tokens (user_id, label, token_hash, created_at) VALUES (?, ?, ?, ?)");
+  const remove = database.prepare("DELETE FROM api_tokens WHERE id = ? AND user_id = ?");
   return {
     list(): TokenInfo[] {
-      return (list.all() as TokenRow[]).map((row) => ({ id: row.id, label: row.label, createdAt: row.created_at }));
+      return (list.all(userId) as TokenRow[]).map((row) => ({ id: row.id, label: row.label, createdAt: row.created_at }));
     },
     create(label: string) {
       const token = `et_${randomBytes(32).toString("hex")}`;
-      const result = insert.run(label, createHash("sha256").update(token).digest("hex"), new Date().toISOString());
+      const result = insert.run(userId, label, createHash("sha256").update(token).digest("hex"), new Date().toISOString());
       return { id: Number(result.lastInsertRowid), label, token };
     },
-    verify(token: string): boolean {
-      if (!/^et_[a-f0-9]{64}$/.test(token)) return false;
-      const hash = createHash("sha256").update(token).digest();
-      const row = lookup.get(hash.toString("hex")) as { token_hash: string } | undefined;
-      return !!row && timingSafeEqual(hash, Buffer.from(row.token_hash, "hex"));
-    },
     revoke(id: number): boolean {
-      return remove.run(id).changes > 0;
+      return remove.run(id, userId).changes > 0;
     },
   };
 }
 
-export function authenticateBearer(request: Request, tokens: ReturnType<typeof createTokenRepository>): boolean {
+export function authenticateBearer(request: Request, database: Database.Database): AuthUser | null {
   const header = request.headers.get("authorization");
-  return !!header && /^Bearer et_[a-f0-9]{64}$/.test(header) && tokens.verify(header.slice(7));
+  if (!header || !/^Bearer et_[a-f0-9]{64}$/.test(header)) return null;
+  const token = header.slice(7);
+  const hash = createHash("sha256").update(token).digest();
+  const row = database.prepare(`
+    SELECT api_tokens.token_hash, users.id, users.username, users.role, users.must_change_password, users.created_at
+    FROM api_tokens JOIN users ON users.id = api_tokens.user_id
+    WHERE api_tokens.token_hash = ?
+  `).get(hash.toString("hex")) as ({ token_hash: string; id: number; username: string; role: "admin" | "user";
+    must_change_password: number; created_at: string }) | undefined;
+  if (!row || !timingSafeEqual(hash, Buffer.from(row.token_hash, "hex"))) return null;
+  return { id: row.id, username: row.username, role: row.role,
+    mustChangePassword: !!row.must_change_password, createdAt: row.created_at };
 }
 
-export function requireToken(request: Request, database: Database.Database): Response | null {
-  return authenticateBearer(request, createTokenRepository(database))
-    ? null
-    : Response.json({ error: "A valid Bearer token is required." }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
-}
-
-export function requireLocalOwner(request: Request): Response | null {
-  const requestUrl = new URL(request.url);
-  let localUrl: URL;
-  try { localUrl = new URL(`${requestUrl.protocol}//${request.headers.get("host") || requestUrl.host}`); }
-  catch { return Response.json({ error: "Local, same-origin access only." }, { status: 403 }); }
-  const host = localUrl.hostname;
-  const origin = request.headers.get("origin");
-  let sameOrigin = true;
-  if (origin) {
-    try { sameOrigin = new URL(origin).origin === localUrl.origin; }
-    catch { sameOrigin = false; }
+export function requireToken(request: Request, database: Database.Database): { user: AuthUser } | { response: Response } {
+  const user = authenticateBearer(request, database);
+  if (user?.mustChangePassword) {
+    return { response: Response.json({ error: "Password change required.", code: "PASSWORD_CHANGE_REQUIRED" }, { status: 403 }) };
   }
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(host)
-    || !sameOrigin) {
-    return Response.json({ error: "Local, same-origin access only." }, { status: 403 });
-  }
-  return null;
+  return user
+    ? { user }
+    : { response: Response.json({ error: "A valid Bearer token is required." }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }) };
 }

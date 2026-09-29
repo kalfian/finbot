@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initializeDatabase } from "../lib/database";
 import { handleExpenseMcp } from "../lib/expense-mcp";
+import { createUserRepository } from "../lib/auth";
 
 test("MCP initializes, lists tools, creates records, and returns filtered summary", async () => {
   const database = new Database(":memory:");
@@ -18,7 +19,7 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
     });
-    const response = await handleExpenseMcp(request, database, proofDirectory);
+    const response = await handleExpenseMcp(request, database, 1, proofDirectory);
     assert.equal(response.status, 200);
     return response.json();
   }
@@ -61,5 +62,31 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
   } finally {
     database.close();
     rmSync(proofDirectory, { recursive: true, force: true });
+  }
+});
+
+test("MCP reads and writes only the authenticated user's ledger", async () => {
+  const database = new Database(":memory:");
+  initializeDatabase(database);
+  const user = createUserRepository(database).create("mcp-user", "temporary123");
+  let id = 0;
+  async function call(userId: number, name: string, args: unknown) {
+    const request = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: { name, arguments: args } }),
+    });
+    return (await handleExpenseMcp(request, database, userId)).json();
+  }
+  try {
+    const input = { amountCents: 1000, description: "Shared source", category: "Other", date: "2026-09-24T16:00:00.000Z", sourceId: "agent:shared" };
+    await call(1, "create_expense", input);
+    await call(user.id, "create_expense", { ...input, amountCents: 2000 });
+    const adminList = await call(1, "list_expenses", {});
+    const userList = await call(user.id, "list_expenses", {});
+    assert.deepEqual(JSON.parse(adminList.result.content[0].text).expenses.map((expense: { amountCents: number }) => expense.amountCents), [1000]);
+    assert.deepEqual(JSON.parse(userList.result.content[0].text).expenses.map((expense: { amountCents: number }) => expense.amountCents), [2000]);
+  } finally {
+    database.close();
   }
 });

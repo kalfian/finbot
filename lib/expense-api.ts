@@ -85,3 +85,32 @@ export async function postExpense(
     );
   }
 }
+
+export async function patchExpense(
+  request: Request,
+  id: number,
+  repository: Pick<ExpenseRepository, "update">,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Request body must be valid JSON." }, { status: 400 });
+  }
+
+  const validation = validateExpense(body);
+  if ("error" in validation) {
+    return Response.json({ error: validation.error }, { status: 400 });
+  }
+
+  try {
+    const expense = repository.update(id, validation.value);
+    if (!expense) return Response.json({ error: "Expense not found." }, { status: 404 });
+    return Response.json({ expense });
+  } catch {
+    return Response.json(
+      { error: "We couldn't update this expense. Please try again." },
+      { status: 500 },
+    );
+  }
+}

@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Paperclip, Plus, Search, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Paperclip, Pencil, Plus, Search, X } from "lucide-react";
 import ThemeToggle from "./theme-toggle";
 import ProofControls from "./proof-controls";
 import { formatExpenseDate } from "@/lib/date-time";
@@ -15,14 +15,16 @@ import {
   summarizeLocalMonth,
   type CalendarExpense,
 } from "@/lib/expense-calendar";
-import { EXPENSE_CATEGORIES, getBrowserLocalDateTime, saveExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
+import { amountCentsToInput, EXPENSE_CATEGORIES, getBrowserLocalDateTime, saveExpense, updateExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
 import { MAX_PROOFS, MAX_PROOF_BYTES } from "@/lib/proof-types";
 import { calculateTotal, formatCurrency } from "@/lib/money";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
+import AccountNav from "./account-nav";
 
 type Expense = CalendarExpense & { proofCount: number };
 type FieldName = "amount" | "description" | "category" | "date";
 type ActivityView = "list" | "calendar";
+type CurrentUser = { username: string; role: "admin" | "user" };
 
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -32,7 +34,7 @@ function formatDay(key: string): string {
     .format(new Date(year, month - 1, day));
 }
 
-export default function ExpenseTracker() {
+export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -40,6 +42,7 @@ export default function ExpenseTracker() {
   const [formError, setFormError] = useState("");
   const [invalidField, setInvalidField] = useState<FieldName | null>(null);
   const [successMessage, setSuccessMessage] = useState("");
+  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Food");
@@ -147,8 +150,11 @@ export default function ExpenseTracker() {
 
     setIsSubmitting(true);
     try {
-      const expenseId = await saveExpense(validation.value);
+      const expenseId = editingExpenseId ?? await saveExpense(validation.value);
+      if (editingExpenseId !== null) await updateExpense(editingExpenseId, validation.value);
       const selectedProofs = files.map((file) => ({ file, sourceId: crypto.randomUUID() }));
+      const wasEditing = editingExpenseId !== null;
+      setEditingExpenseId(null);
       setAmount("");
       setDescription("");
       setCategory("Food");
@@ -159,7 +165,9 @@ export default function ExpenseTracker() {
       setCalendarMonth(startOfLocalMonth(savedDate));
       setSelectedDayKey(getLocalDateKey(savedDate));
       const refreshed = await loadExpenses();
-      setSuccessMessage(refreshed ? "Expense added." : "Expense saved, but the list couldn't refresh. Try again below.");
+      setSuccessMessage(refreshed
+        ? wasEditing ? "Expense updated." : "Expense added."
+        : "Expense saved, but the list couldn't refresh. Try again below.");
       if (selectedProofs.length) await attachPending({ expenseId, files: selectedProofs });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "We couldn't save this expense. Please try again.");
@@ -193,6 +201,7 @@ export default function ExpenseTracker() {
   }
 
   function handleReset() {
+    setEditingExpenseId(null);
     setAmount("");
     setDescription("");
     setCategory("Food");
@@ -203,12 +212,28 @@ export default function ExpenseTracker() {
     setSuccessMessage("");
   }
 
+  function startEditing(expense: Expense) {
+    setEditingExpenseId(expense.id);
+    setAmount(amountCentsToInput(expense.amountCents));
+    setDescription(expense.description);
+    setCategory(expense.category);
+    setDate(getBrowserLocalDateTime(new Date(expense.date)));
+    setFiles([]);
+    if (proofInputRef.current) proofInputRef.current.value = "";
+    setFormError("");
+    setInvalidField(null);
+    setSuccessMessage("");
+    amountRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    amountRef.current?.focus({ preventScroll: true });
+  }
+
   function moveCalendarMonth(offset: number) {
     setCalendarMonth((month) => shiftLocalMonth(month, offset));
     setSelectedDayKey(null);
   }
 
-  function focusForm() {
+  function startAdding() {
+    handleReset();
     amountRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     amountRef.current?.focus({ preventScroll: true });
   }
@@ -248,7 +273,8 @@ export default function ExpenseTracker() {
       <div className="header-actions">
         <Link className="header-link" href="/integrations">Integrations</Link>
         <ThemeToggle />
-        <button className="header-action" type="button" onClick={focusForm}><Plus size={17} aria-hidden="true" /> Add expense</button>
+        <AccountNav username={user.username} role={user.role} />
+        <button className="header-action" type="button" onClick={startAdding}><Plus size={17} aria-hidden="true" /> Add expense</button>
       </div>
     </header>
 
@@ -294,13 +320,13 @@ export default function ExpenseTracker() {
           : loadError ? <div className="state error" role="alert"><p>{loadError}</p><button className="inline-button" type="button" onClick={() => void loadExpenses()}>Try again</button></div>
             : <>
               <div id="list-panel" role="tabpanel" aria-labelledby="list-tab" hidden={activityView !== "list"}>
-                {expenses.length === 0 ? <div className="empty-state"><p>No expenses recorded yet.</p><button className="inline-button" type="button" onClick={focusForm}>Add your first expense</button></div> : <>
+                {expenses.length === 0 ? <div className="empty-state"><p>No expenses recorded yet.</p><button className="inline-button" type="button" onClick={startAdding}>Add your first expense</button></div> : <>
                   <p className="result-count" role="status">{`${filteredExpenses.length} of ${expenses.length} expenses`}</p>
                   {filteredExpenses.length === 0
                     ? <div className="empty-state"><p>No expenses match your filters.</p><button className="inline-button" type="button" onClick={() => { setSearchQuery(""); setReportStart(""); setReportEnd(""); }}>Clear filters</button></div>
-                    : <ul className="expense-list">{filteredExpenses.map((expense) => <li key={expense.id}>
+                    : <ul className="expense-list">{filteredExpenses.map((expense) => <li className={editingExpenseId === expense.id ? "is-editing" : undefined} key={expense.id}>
                       <div className="expense-main"><p className="expense-description">{expense.description}</p><div className="expense-meta"><span>{expense.category}</span><time dateTime={expense.date}>{formatExpenseDate(expense.date)}</time></div><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></div>
-                      <strong>{formatCurrency(expense.amountCents)}</strong>
+                      <div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button></div>
                     </li>)}</ul>}
                 </>}
               </div>
@@ -328,7 +354,7 @@ export default function ExpenseTracker() {
                 {selectedDayKey && <div className="selected-day" aria-live="polite">
                   <div className="selected-day-heading"><div><p className="section-label">Selected day</p><h4>Expenses on {formatDay(selectedDayKey)}</h4></div><strong>{formatCurrency(selectedDayTotal)}</strong></div>
                   {selectedDayExpenses.length === 0 ? <p className="day-empty">No expenses recorded for this day.</p>
-                    : <ul>{selectedDayExpenses.map((expense) => <li key={expense.id}><span>{expense.description}<small>{expense.category}</small><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></span><strong>{formatCurrency(expense.amountCents)}</strong></li>)}</ul>}
+                    : <ul>{selectedDayExpenses.map((expense) => <li className={editingExpenseId === expense.id ? "is-editing" : undefined} key={expense.id}><span>{expense.description}<small>{expense.category}</small><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></span><div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button></div></li>)}</ul>}
                 </div>}
               </div>
             </>}
@@ -340,8 +366,8 @@ export default function ExpenseTracker() {
         </section>}
       </section>
 
-      <section className="entry-panel" aria-labelledby="add-expense-heading">
-        <div className="panel-heading"><div><p className="section-label">New record</p><h2 id="add-expense-heading">Add an expense</h2></div></div>
+      <section className={`entry-panel${editingExpenseId !== null ? " edit-mode" : ""}`} aria-labelledby="expense-form-heading">
+        <div className="panel-heading"><div><p className="section-label">{editingExpenseId !== null ? `Editing record #${editingExpenseId}` : "New record"}</p><h2 id="expense-form-heading">{editingExpenseId !== null ? "Edit expense" : "Add an expense"}</h2></div></div>
         <form onSubmit={handleSubmit} onReset={handleReset} noValidate>
           <div className="field">
             <label htmlFor="amount">Amount (IDR)</label>
@@ -367,7 +393,7 @@ export default function ExpenseTracker() {
             </button>
           </div>}
           {successMessage && <p className="form-message success" role="status">{successMessage}</p>}
-          <div className="form-actions"><button className="primary-button" type="submit" disabled={isSubmitting || !!pendingProofs}><Plus size={17} aria-hidden="true" />{isSubmitting ? "Adding…" : "Add expense"}</button><button className="secondary-button" type="reset" disabled={isSubmitting}>Clear form</button></div>
+          <div className="form-actions"><button className="primary-button" type="submit" disabled={isSubmitting || !!pendingProofs}>{editingExpenseId !== null ? <Pencil size={17} aria-hidden="true" /> : <Plus size={17} aria-hidden="true" />}{isSubmitting ? editingExpenseId !== null ? "Saving…" : "Adding…" : editingExpenseId !== null ? "Save changes" : "Add expense"}</button><button className="secondary-button" type="reset" disabled={isSubmitting}>{editingExpenseId !== null ? "Cancel editing" : "Clear form"}</button></div>
         </form>
       </section>
     </div>

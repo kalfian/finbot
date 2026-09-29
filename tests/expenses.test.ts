@@ -8,13 +8,14 @@ import Database from "better-sqlite3";
 
 import { initializeDatabase } from "../lib/database";
 import { createExpenseRepository } from "../lib/expenses";
-import { getExpenses, postExpense } from "../lib/expense-api";
+import { getExpenses, patchExpense, postExpense } from "../lib/expense-api";
+import { createUserRepository } from "../lib/auth";
 
 function createTestRepository() {
   const database = new Database(":memory:");
   initializeDatabase(database);
 
-  return { database, repository: createExpenseRepository(database) };
+  return { database, repository: createExpenseRepository(database, 1) };
 }
 
 test("repository creates expenses and lists them by newest expense date", () => {
@@ -39,6 +40,67 @@ test("repository creates expenses and lists them by newest expense date", () => 
   }
 });
 
+test("repository updates an expense without changing its identity or proofs", () => {
+  const { database, repository } = createTestRepository();
+  try {
+    const created = repository.create({
+      amountCents: 1250,
+      description: "Coffee beans",
+      category: "Food",
+      date: "2026-01-01T08:00:00.000Z",
+    });
+    database.prepare(`
+      INSERT INTO expense_proofs (id, expense_id, filename, mime_type, size_bytes, sha256, created_at)
+      VALUES ('proof-1', ?, 'receipt.pdf', 'application/pdf', 10, 'hash', '2026-01-01T09:00:00.000Z')
+    `).run(created.id);
+
+    const updated = repository.update(created.id, {
+      amountCents: 5000,
+      description: "Weekly groceries",
+      category: "Shopping",
+      date: "2026-01-03T08:00:00.000Z",
+    });
+
+    assert.deepEqual(updated, {
+      ...created,
+      amountCents: 5000,
+      description: "Weekly groceries",
+      category: "Shopping",
+      date: "2026-01-03T08:00:00.000Z",
+      proofCount: 1,
+    });
+    assert.equal(repository.update(999, {
+      amountCents: 100,
+      description: "Missing",
+      category: "Other",
+      date: "2026-01-03T08:00:00.000Z",
+    }), null);
+  } finally {
+    database.close();
+  }
+});
+
+test("expenses and source IDs are isolated by user", () => {
+  const database = new Database(":memory:");
+  try {
+    initializeDatabase(database);
+    const user = createUserRepository(database).create("second-user", "temporary123");
+    const adminExpenses = createExpenseRepository(database, 1);
+    const userExpenses = createExpenseRepository(database, user.id);
+    const adminInput = { amountCents: 1000, description: "Admin lunch", category: "Food", date: "2026-02-14T08:30:00.000Z" };
+    const userInput = { amountCents: 2500, description: "User train", category: "Transport", date: "2026-02-14T09:30:00.000Z" };
+    const adminExpense = adminExpenses.record(adminInput, "chat:shared").expense;
+    const userExpense = userExpenses.record(userInput, "chat:shared").expense;
+
+    assert.deepEqual(adminExpenses.list(), [adminExpense]);
+    assert.deepEqual(userExpenses.list(), [userExpense]);
+    assert.equal(userExpenses.update(adminExpense.id, userInput), null);
+    assert.equal(adminExpenses.list()[0].description, "Admin lunch");
+  } finally {
+    database.close();
+  }
+});
+
 test("repository persists expenses after a file-backed database is reopened", () => {
   const directory = mkdtempSync(join(tmpdir(), "ledger-expenses-"));
   const path = join(directory, "expenses.db");
@@ -46,7 +108,7 @@ test("repository persists expenses after a file-backed database is reopened", ()
 
   try {
     initializeDatabase(firstDatabase);
-    const created = createExpenseRepository(firstDatabase).create({
+    const created = createExpenseRepository(firstDatabase, 1).create({
       amountCents: 2350,
       description: "Train fare",
       category: "Transport",
@@ -57,7 +119,7 @@ test("repository persists expenses after a file-backed database is reopened", ()
     const reopenedDatabase = new Database(path);
     try {
       initializeDatabase(reopenedDatabase);
-      assert.deepEqual(createExpenseRepository(reopenedDatabase).list(), [created]);
+      assert.deepEqual(createExpenseRepository(reopenedDatabase, 1).list(), [created]);
     } finally {
       reopenedDatabase.close();
     }
@@ -82,7 +144,7 @@ test("database migration gives existing expenses the backwards-compatible Other 
       VALUES (1000, 'Legacy expense', '2026-02-14', '2026-02-14T08:30:00.000Z');
     `);
     initializeDatabase(database);
-    assert.deepEqual(createExpenseRepository(database).list(), [{
+    assert.deepEqual(createExpenseRepository(database, 1).list(), [{
       id: 1,
       amountCents: 1000,
       description: "Legacy expense",
@@ -204,12 +266,60 @@ test("POST rejects invalid input without creating an expense", async () => {
   }
 });
 
+test("PATCH updates an expense and returns validation and not-found errors", async () => {
+  const { database, repository } = createTestRepository();
+  try {
+    const created = repository.create({
+      amountCents: 1000,
+      description: "Lunch",
+      category: "Food",
+      date: "2026-02-14T08:30:00.000Z",
+    });
+    const response = await patchExpense(
+      new Request(`http://localhost/api/expenses/${created.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amountCents: 2500, description: "Dinner", category: "Food", date: "2026-02-14T12:30:00.000Z" }),
+      }),
+      created.id,
+      repository,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      expense: { ...created, amountCents: 2500, description: "Dinner", date: "2026-02-14T12:30:00.000Z" },
+    });
+
+    const invalid = await patchExpense(
+      new Request(`http://localhost/api/expenses/${created.id}`, { method: "PATCH", body: JSON.stringify({ amountCents: 0 }) }),
+      created.id,
+      repository,
+    );
+    assert.equal(invalid.status, 400);
+
+    const missing = await patchExpense(
+      new Request("http://localhost/api/expenses/999", {
+        method: "PATCH",
+        body: JSON.stringify({ amountCents: 2500, description: "Dinner", category: "Food", date: "2026-02-14T12:30:00.000Z" }),
+      }),
+      999,
+      repository,
+    );
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: "Expense not found." });
+  } finally {
+    database.close();
+  }
+});
+
 test("API returns a generic error when persistence fails", async () => {
   const failingRepository = {
     create() {
       throw new Error("database path should not be exposed");
     },
     list() {
+      throw new Error("database path should not be exposed");
+    },
+    update() {
       throw new Error("database path should not be exposed");
     },
   };
@@ -231,6 +341,19 @@ test("API returns a generic error when persistence fails", async () => {
   assert.equal(listResponse.status, 500);
   assert.deepEqual(await listResponse.json(), {
     error: "We couldn't load expenses. Please try again.",
+  });
+
+  const updateResponse = await patchExpense(
+    new Request("http://localhost/api/expenses/1", {
+      method: "PATCH",
+      body: JSON.stringify({ amountCents: 100, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }),
+    }),
+    1,
+    failingRepository,
+  );
+  assert.equal(updateResponse.status, 500);
+  assert.deepEqual(await updateResponse.json(), {
+    error: "We couldn't update this expense. Please try again.",
   });
 });
 
@@ -259,7 +382,7 @@ test("route handlers return generic errors when database setup fails", async () 
   try {
     const { GET, POST } = await import("../app/api/expenses/route");
 
-    const getResponse = GET();
+    const getResponse = GET(new Request("http://localhost/api/expenses"));
     assert.equal(getResponse.status, 500);
     assert.deepEqual(await getResponse.json(), {
       error: "We couldn't load expenses. Please try again.",
