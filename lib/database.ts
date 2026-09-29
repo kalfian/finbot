@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_USERNAME, hashPassword } from "./auth";
+import { DEFAULT_EXPENSE_CATEGORIES } from "./categories";
 
 const defaultDatabasePath = "data/financial-tracker.db";
 
@@ -61,9 +62,39 @@ export function initializeDatabase(database = openDatabase()): void {
   migrateBudgetTable(database);
   createExpenseSources(database);
   createProofsTable(database);
+  createExpenseCategories(database);
   createAppSecretsTable(database);
   createSessionsTable(database);
   createIndexes(database);
+}
+
+function createExpenseCategories(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS expense_categories (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      name TEXT NOT NULL COLLATE NOCASE,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS expense_categories_user_name
+      ON expense_categories(user_id, name COLLATE NOCASE);
+  `);
+  database.prepare("UPDATE expenses SET category = 'Other' WHERE TRIM(category) = ''").run();
+  const insert = database.prepare(`
+    INSERT OR IGNORE INTO expense_categories (user_id, name, created_at)
+    VALUES (?, ?, ?)
+  `);
+  const createdAt = new Date().toISOString();
+  const users = database.prepare("SELECT id FROM users").all() as Array<{ id: number }>;
+  for (const { id } of users) {
+    for (const name of DEFAULT_EXPENSE_CATEGORIES) insert.run(id, name, createdAt);
+  }
+  database.exec(`
+    INSERT OR IGNORE INTO expense_categories (user_id, name, created_at)
+    SELECT DISTINCT user_id, TRIM(category), datetime('now')
+    FROM expenses
+    WHERE TRIM(category) <> '';
+  `);
 }
 
 function createAppSecretsTable(database: Database.Database): void {
@@ -210,6 +241,7 @@ function createSessionsTable(database: Database.Database): void {
 function createIndexes(database: Database.Database): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS expenses_user_date_id ON expenses(user_id, date DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS expenses_user_category ON expenses(user_id, category COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS api_tokens_user_id_id ON api_tokens(user_id, id DESC);
     CREATE INDEX IF NOT EXISTS expense_sources_expense_id ON expense_sources(expense_id);
     CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions(user_id);

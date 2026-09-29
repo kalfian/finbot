@@ -1,4 +1,4 @@
-import { EXPENSE_CATEGORIES, type ExpenseCategory } from "./expense-form";
+import { EXPENSE_CATEGORIES } from "./expense-form";
 import type { ExpenseRepository, NewExpense } from "./expenses";
 import { deleteProofFiles, type ProofFile } from "./expense-proofs";
 
@@ -14,7 +14,7 @@ export function isUtcDateTime(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
-export function validateExpense(value: unknown): ValidationResult {
+export function validateExpense(value: unknown, supportedCategories: readonly string[] = EXPENSE_CATEGORIES): ValidationResult {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { error: "Request body must be a JSON object." };
   }
@@ -30,7 +30,10 @@ export function validateExpense(value: unknown): ValidationResult {
   if (typeof description !== "string" || !description.trim()) {
     return { error: "description is required." };
   }
-  if (typeof category !== "string" || !(EXPENSE_CATEGORIES as readonly string[]).includes(category)) {
+  const matchedCategory = typeof category === "string"
+    ? supportedCategories.find((item) => item.toLocaleLowerCase() === category.toLocaleLowerCase())
+    : undefined;
+  if (!matchedCategory) {
     return { error: "category must be a supported expense category." };
   }
   if (typeof date !== "string" || !isUtcDateTime(date)) {
@@ -41,7 +44,7 @@ export function validateExpense(value: unknown): ValidationResult {
     value: {
       amountCents,
       description: description.trim(),
-      category: category as ExpenseCategory,
+      category: matchedCategory,
       date,
     },
   };

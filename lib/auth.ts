@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type Database from "better-sqlite3";
+import { seedDefaultCategories } from "./categories";
 
 export const SESSION_COOKIE = "expense_tracker_session";
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -93,8 +94,12 @@ export function createUserRepository(database: Database.Database) {
       const passwordError = validateNewPassword(password);
       if (passwordError) throw new Error(passwordError);
       try {
-        const result = insert.run(normalized, hashPassword(password), new Date().toISOString());
-        return toUser(byId.get(result.lastInsertRowid) as UserRow);
+        return database.transaction(() => {
+          const result = insert.run(normalized, hashPassword(password), new Date().toISOString());
+          const user = toUser(byId.get(result.lastInsertRowid) as UserRow);
+          seedDefaultCategories(database, user.id);
+          return user;
+        })();
       } catch (error) {
         if (error instanceof Error && error.message.includes("UNIQUE")) throw new Error("Username is already in use.");
         throw error;

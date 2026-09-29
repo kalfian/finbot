@@ -1,4 +1,5 @@
 import { toAmountCents } from "./money";
+import { DEFAULT_EXPENSE_CATEGORIES } from "./categories";
 
 export type ExpenseFormValues = {
   amount: string;
@@ -10,11 +11,11 @@ export type ExpenseFormValues = {
 export type NewExpenseRequest = {
   amountCents: number;
   description: string;
-  category: ExpenseCategory;
+  category: string;
   date: string;
 };
 
-export const EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Shopping", "Health", "Other"] as const;
+export const EXPENSE_CATEGORIES = DEFAULT_EXPENSE_CATEGORIES;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
 export function getBrowserLocalDateTime(now: Date = new Date()): string {
@@ -41,15 +42,18 @@ export function localDateTimeToUtc(value: string): string | null {
   return date.toISOString();
 }
 
-function isExpenseCategory(value: string): value is ExpenseCategory {
-  return (EXPENSE_CATEGORIES as readonly string[]).includes(value);
+function isExpenseCategory(value: string, supportedCategories: readonly string[]): boolean {
+  return supportedCategories.some((category) => category.toLocaleLowerCase() === value.toLocaleLowerCase());
 }
 
 type ValidationResult =
   | { value: NewExpenseRequest }
   | { error: string };
 
-export function validateExpenseForm(values: ExpenseFormValues): ValidationResult {
+export function validateExpenseForm(
+  values: ExpenseFormValues,
+  supportedCategories: readonly string[] = EXPENSE_CATEGORIES,
+): ValidationResult {
   const amountCents = toAmountCents(values.amount);
   if (amountCents === null) {
     return { error: "Enter an amount greater than Rp0,00, with no more than two decimal places." };
@@ -57,7 +61,7 @@ export function validateExpenseForm(values: ExpenseFormValues): ValidationResult
   if (!values.description.trim()) {
     return { error: "Enter a description for this expense." };
   }
-  if (!isExpenseCategory(values.category)) {
+  if (!isExpenseCategory(values.category, supportedCategories)) {
     return { error: "Choose a category for this expense." };
   }
   if (!values.date) {

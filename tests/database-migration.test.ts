@@ -39,9 +39,10 @@ test("legacy data migrates to admin ownership with required isolation indexes", 
     assert.equal((database.prepare("SELECT length(value) AS length FROM app_secrets WHERE name = 'session_jwt'").get() as { length: number }).length >= 43, true);
 
     const indexes = new Set((database.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all() as Array<{ name: string }>).map(({ name }) => name));
-    for (const name of ["users_username_unique", "expenses_user_date_id", "api_tokens_user_id_id", "expense_sources_expense_id", "sessions_user_id", "sessions_expires_at"]) {
+    for (const name of ["users_username_unique", "expenses_user_date_id", "expenses_user_category", "expense_categories_user_name", "api_tokens_user_id_id", "expense_sources_expense_id", "sessions_user_id", "sessions_expires_at"]) {
       assert.equal(indexes.has(name), true, `${name} should exist`);
     }
+    assert.equal((database.prepare("SELECT COUNT(*) AS count FROM expense_categories WHERE user_id = 1").get() as { count: number }).count, 6);
     const plan = database.prepare("EXPLAIN QUERY PLAN SELECT * FROM expenses WHERE user_id = ? ORDER BY date DESC, id DESC").all(1) as Array<{ detail: string }>;
     assert.equal(plan.some(({ detail }) => detail.includes("expenses_user_date_id")), true);
     assert.throws(() => database.prepare("UPDATE expenses SET user_id = NULL WHERE id = 7").run(), /user_id is required/);

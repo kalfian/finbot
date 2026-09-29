@@ -4,6 +4,7 @@ import { getExpenses, validateExpense } from "@/lib/expense-api";
 import { createExpenseRepository } from "@/lib/expenses";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
 import { budgetSnapshot } from "@/lib/budget";
+import { createCategoryRepository } from "@/lib/categories";
 
 export const runtime = "nodejs";
 
@@ -26,7 +27,8 @@ export async function POST(request: Request): Promise<Response> {
   if ("response" in auth) return auth.response;
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ error: "Request body must be valid JSON." }, { status: 400 }); }
-  const validation = validateExpense(body);
+  const categories = createCategoryRepository(database, auth.user.id).list().map(({ name }) => name);
+  const validation = validateExpense(body, categories);
   if ("error" in validation) return Response.json({ error: validation.error }, { status: 400 });
   const sourceId = (body as Record<string, unknown>).sourceId;
   if (sourceId !== undefined && (typeof sourceId !== "string" || !sourceId.trim() || sourceId.length > 200)) {
