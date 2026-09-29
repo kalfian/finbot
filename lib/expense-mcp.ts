@@ -5,14 +5,15 @@ import type Database from "better-sqlite3";
 import { createExpenseRepository } from "./expenses";
 import { buildExpensePdf } from "./expense-report";
 import { filterReportExpenses, validateReportRange } from "./expense-filters";
-import { EXPENSE_CATEGORIES } from "./expense-form";
 import { validateExpense } from "./expense-api";
 import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
 import { deleteProofFiles, listProofs, ProofError, readProof, saveProof } from "./expense-proofs";
+import { CategoryConflictError, CategoryInUseError, createCategoryRepository } from "./categories";
 
 export function createExpenseMcpServer(database: Database.Database, userId: number, proofDirectory?: string): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
   const repository = createExpenseRepository(database, userId);
+  const categories = createCategoryRepository(database, userId);
   const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
   const failure = (code: string, error: string, hint: string) => ({ isError: true, ...result({ error, code, hint }) });
   server.registerTool("list_expenses", {
@@ -30,16 +31,16 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("create_expense", {
     title: "Create expense",
-    description: "Record one expense. amountCents is positive IDR minor units, date is ISO UTC; sourceId identifies a chat message for safe retries. Returns budget totals for that expense's Jakarta day and month.",
+    description: "Record one expense. Call list_categories first. amountCents is positive IDR minor units and date is ISO UTC. sourceId is an optional caller-generated idempotency key: use transport metadata when already available, otherwise omit it; never ask the end user for sourceId. Returns budget totals for the expense's Jakarta day and month.",
     inputSchema: {
       amountCents: z.number().int().positive().safe(),
       description: z.string().trim().min(1),
-      category: z.enum(EXPENSE_CATEGORIES),
+      category: z.string().trim().min(1).max(80),
       date: z.string(),
       sourceId: z.string().min(1).max(200).optional(),
     },
   }, async (expense) => {
-    const validation = validateExpense(expense);
+    const validation = validateExpense(expense, categories.list().map(({ name }) => name));
     if ("error" in validation) return failure("INVALID_EXPENSE", validation.error,
       "Correct the expense fields and retry create_expense.");
     try {
@@ -58,11 +59,11 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       expenseId: z.number().int().positive().safe(),
       amountCents: z.number().int().positive().safe(),
       description: z.string().trim().min(1),
-      category: z.enum(EXPENSE_CATEGORIES),
+      category: z.string().trim().min(1).max(80),
       date: z.string(),
     },
   }, async ({ expenseId, ...expense }) => {
-    const validation = validateExpense(expense);
+    const validation = validateExpense(expense, categories.list().map(({ name }) => name));
     if ("error" in validation) return failure("INVALID_EXPENSE", validation.error,
       "Provide expenseId and all four editable expense fields, then retry update_expense.");
     try {
@@ -108,7 +109,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("attach_expense_proof", {
     title: "Attach expense proof",
-    description: "Save a JPEG, PNG, WebP, or PDF proof to an existing expense. 5 MB maximum, 3 proofs per expense. Use a stable sourceId for safe retries.",
+    description: "Save a JPEG, PNG, WebP, or PDF proof to an existing expense. 5 MB maximum, 3 proofs per expense. sourceId is optional; use an existing transport event ID for safe retries or omit it, and never ask the end user for one.",
     inputSchema: {
       expenseId: z.number().int().positive().safe(),
       filename: z.string().min(1).max(120),
@@ -163,6 +164,57 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   }, async ({ monthlyLimitCents }) => {
     createBudgetRepository(database, userId).setMonthlyLimitCents(monthlyLimitCents);
     return result(budgetSnapshot(database, userId));
+  });
+  server.registerTool("list_categories", {
+    title: "List categories",
+    description: "List the authenticated user's valid expense categories. Call this before choosing a category for create_expense or update_expense.",
+    inputSchema: {},
+  }, async () => result({ categories: categories.list() }));
+  server.registerTool("create_category", {
+    title: "Create category",
+    description: "Create one expense category for the authenticated user. Names are case-insensitively unique and contain at most 80 characters.",
+    inputSchema: { name: z.string().trim().min(1).max(80) },
+  }, async ({ name }) => {
+    try { return result({ category: categories.create(name) }); }
+    catch (error) {
+      return failure(error instanceof CategoryConflictError ? "CATEGORY_NAME_CONFLICT" : "INVALID_CATEGORY",
+        error instanceof Error ? error.message : "Category could not be created.",
+        "Call list_categories, then choose a new non-empty category name up to 80 characters.");
+    }
+  });
+  server.registerTool("update_category", {
+    title: "Update category",
+    description: "Rename an owned category and all existing expenses that use it.",
+    inputSchema: { categoryId: z.number().int().positive().safe(), name: z.string().trim().min(1).max(80) },
+  }, async ({ categoryId, name }) => {
+    try {
+      const category = categories.update(categoryId, name);
+      return category ? result({ category }) : failure("CATEGORY_NOT_FOUND", "Category not found or not owned by this user.",
+        "Call list_categories and verify the categoryId before retrying.");
+    } catch (error) {
+      return failure(error instanceof CategoryConflictError ? "CATEGORY_NAME_CONFLICT" : "INVALID_CATEGORY",
+        error instanceof Error ? error.message : "Category could not be updated.",
+        "Use a unique non-empty name up to 80 characters, then retry.");
+    }
+  });
+  server.registerTool("delete_category", {
+    title: "Delete category",
+    description: "Delete an unused owned category. This fails while any expense still uses the category and requires explicit confirmation.",
+    inputSchema: { categoryId: z.number().int().positive().safe(), confirm: z.boolean() },
+  }, async ({ categoryId, confirm }) => {
+    if (!confirm) return failure("DELETE_CONFIRMATION_REQUIRED", "Category deletion was not confirmed.",
+      "Ask the user to confirm the exact category, then retry with confirm=true.");
+    try {
+      const category = categories.delete(categoryId);
+      return category ? result({ deleted: true, category }) : failure("CATEGORY_NOT_FOUND", "Category not found or not owned by this user.",
+        "Call list_categories and verify the categoryId before retrying.");
+    } catch (error) {
+      return failure(error instanceof CategoryInUseError ? "CATEGORY_IN_USE" : "CATEGORY_DELETE_FAILED",
+        error instanceof Error ? error.message : "Category could not be deleted.",
+        error instanceof CategoryInUseError
+          ? "Move or delete every expense using this category, then retry."
+          : "Retry once, then inspect the finbot server log using the MCP request ID.");
+    }
   });
   server.registerTool("expense_summary", {
     title: "Expense summary",

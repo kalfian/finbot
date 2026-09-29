@@ -30,13 +30,13 @@ npm run dev
 
 Open <http://localhost:3000>, sign in as `admin` with temporary password `123456`, and replace it when prompted. Administrators can create standard users from the Users page; administrators manage accounts but do not automatically see another user's financial data. SQLite lives at `./data/financial-tracker.db` by default; set `DATABASE_PATH` to use another local file. Proof files live in `proofs/` beside the database; back up both together. Database files, proof files, and local environment files are ignored by Git. To run the production build locally, use `npm run build` and `npm start`.
 
-The app has six categories (`Food`, `Transport`, `Bills`, `Shopping`, `Health`, `Other`). List search and optional dates filter the downloaded PDF too. Report dates use inclusive Asia/Jakarta (UTC+7) days; the calendar groups records by the browser's local date. Set one recurring monthly IDR limit and manage one-time API tokens on [Integrations](http://localhost:3000/integrations).
+Each user starts with six categories (`Food`, `Transport`, `Bills`, `Shopping`, `Health`, `Other`) and can create, rename, or delete unused categories on [Integrations](http://localhost:3000/integrations). List search and optional dates filter the downloaded PDF too. Report dates use inclusive Asia/Jakarta (UTC+7) days; the calendar groups records by the browser's local date.
 
 ## Connect an LLM agent
 
 Expense Tracker is the **system of record**, not a chat bot or OCR service. The agent owns message intake, interpretation, authorized-user checks, optional photo understanding, and replies. It must write through the API/MCP and use returned numbers—not generate totals itself.
 
-For a message `Seblak 10.000`, a successful agent extracts `Seblak` / `Food` / IDR 10,000, sends `amountCents: 1000000`, and uses the message timestamp converted to ISO UTC. It sends a stable `sourceId` for retries, then formats the returned expense ID and budget snapshot as a chat reply. If the amount or receipt total is unclear, it asks before writing.
+For a message `Seblak 10.000`, a successful agent extracts `Seblak` / `Food` / IDR 10,000, sends `amountCents: 1000000`, and uses the message timestamp converted to ISO UTC. The adapter may include an optional stable `sourceId` when transport metadata is already available; otherwise it omits it and never asks the user. The agent then formats the returned expense ID and budget snapshot as a chat reply.
 
 ```text
 Chat message → authorized agent → POST /api/v1/expenses or MCP create_expense
@@ -50,7 +50,7 @@ Start here:
 
 1. Set a monthly limit on [Integrations](http://localhost:3000/integrations), if wanted. No limit is configured by default.
 2. Generate an integration token there and store it in the agent's secret store, or log in through `POST /api/auth/login` and use its short-lived, revocable JWT. Both credentials act only on their user's records. Send `Authorization: Bearer <TOKEN>` to `/api/v1/*` or `/mcp`; never put a token in a URL, prompt, screenshot, log, or commit. The browser keeps its login JWT in an HttpOnly cookie and calls the same `/api/v1` routes.
-3. Give the agent [the Hermes implementation guide](docs/hermes-agent.md). It contains the message/photo decision flow, example request/response, reference reply code, category mapping, clarification rules, idempotent retries, and security boundaries.
+3. Give the agent the strict [MCP end-to-end specification](docs/mcp-end-to-end.md) and, for adapter implementation, [the Hermes guide](docs/hermes-agent.md). They cover text/photo flows, categories, clarification, retries, and security boundaries.
 4. Restrict the chat adapter to authorized senders. Run it on the same device or through a private authenticated connection; app login does not replace HTTPS or network hardening.
 
 ### Agent contract at a glance
@@ -64,13 +64,14 @@ Start here:
 | Search and list | `GET /api/v1/expenses?q=&from=&to=` | `list_expenses` |
 | Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
 | Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
+| List and manage categories | `/api/v1/categories` | `list_categories`, `create_category`, `update_category`, `delete_category` |
 | Category summary and PDF tool | — | `expense_summary`, `export_report_pdf` |
 
 The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes Jakarta `date`/`month`, `todayCents`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
 
-For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. Pass a stable proof `sourceId` for safe retries. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
+For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 
-The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by a login JWT or generated Bearer token. `delete_expense` additionally requires `confirm: true`. See the in-app [API & MCP documentation](http://localhost:3000/docs) for parameter details. The browser uses the same `/api/v1` contracts through its HttpOnly JWT cookie; PDF download remains a browser-session route at `/api/reports/pdf`.
+The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by a login JWT or generated Bearer token. Expense and category deletion require `confirm: true`. See the [MCP end-to-end specification](docs/mcp-end-to-end.md) and in-app [API & MCP documentation](http://localhost:3000/docs). The browser uses only `/api/v1` data contracts through its HttpOnly JWT cookie, including `GET /api/v1/reports/pdf`.
 
 Rejected MCP tool calls return JSON text with a stable `code`, readable `error`, suggested `hint`, and `requestId`. The same ID is returned in `X-MCP-Request-ID` and written to the finbot server log as a compact `[mcp]` JSON line without request arguments, file bytes, or credentials.
 

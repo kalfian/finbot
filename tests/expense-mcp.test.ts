@@ -27,10 +27,16 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     const init = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
     assert.equal(init.result.serverInfo.name, "expense-tracker");
     const tools = await call("tools/list", {});
-    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["attach_expense_proof", "budget_status", "create_expense", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_expense"]);
+    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["attach_expense_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense"]);
+    const createdCategory = await call("tools/call", { name: "create_category", arguments: { name: "Travel" } });
+    const categoryId = JSON.parse(createdCategory.result.content[0].text).category.id;
+    const renamedCategory = await call("tools/call", { name: "update_category", arguments: { categoryId, name: "Transit" } });
+    assert.equal(JSON.parse(renamedCategory.result.content[0].text).category.name, "Transit");
+    const categories = await call("tools/call", { name: "list_categories", arguments: {} });
+    assert.equal(JSON.parse(categories.result.content[0].text).categories.some((item: { name: string }) => item.name === "Transit"), true);
     const limit = await call("tools/call", { name: "set_monthly_limit", arguments: { monthlyLimitCents: 2_000_000_00 } });
     assert.equal(JSON.parse(limit.result.content[0].text).monthlyLimitCents, 2_000_000_00);
-    const input = { amountCents: 150000, description: "Train", category: "Transport", date: "2026-09-24T16:00:00.000Z", sourceId: "test:mcp:1" };
+    const input = { amountCents: 150000, description: "Train", category: "Transit", date: "2026-09-24T16:00:00.000Z", sourceId: "test:mcp:1" };
     const created = await call("tools/call", { name: "create_expense", arguments: input });
     assert.equal(JSON.parse(created.result.content[0].text).expense.description, "Train");
     assert.equal(JSON.parse(created.result.content[0].text).budget.monthCents, 150000);
@@ -49,7 +55,7 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     const fetchedProof = await call("tools/call", { name: "get_expense_proof", arguments: { expenseId, proofId: proof.id } });
     assert.equal(fetchedProof.result.content[0].resource.blob, proofInput.base64);
     const updated = await call("tools/call", { name: "update_expense", arguments: {
-      expenseId, amountCents: 175000, description: "Train and bus", category: "Transport", date: input.date,
+      expenseId, amountCents: 175000, description: "Train and bus", category: "Transit", date: input.date,
     } });
     assert.equal(JSON.parse(updated.result.content[0].text).expense.description, "Train and bus");
     assert.equal(JSON.parse(updated.result.content[0].text).budget.monthCents, 175000);
@@ -57,13 +63,15 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     assert.equal(conflict.result.isError, true);
     const status = await call("tools/call", { name: "budget_status", arguments: { date: "2026-09-24" } });
     assert.equal(JSON.parse(status.result.content[0].text).todayCents, 175000);
-    const listed = await call("tools/call", { name: "list_expenses", arguments: { query: "transport", from: "2026-09-24", to: "2026-09-24" } });
+    const listed = await call("tools/call", { name: "list_expenses", arguments: { query: "transit", from: "2026-09-24", to: "2026-09-24" } });
     assert.equal(JSON.parse(listed.result.content[0].text).expenses.length, 1);
     const summary = await call("tools/call", { name: "expense_summary", arguments: {} });
     assert.equal(JSON.parse(summary.result.content[0].text).totalCents, 175000);
     const report = await call("tools/call", { name: "export_report_pdf", arguments: { query: "train" } });
     assert.equal(report.result.content[0].resource.mimeType, "application/pdf");
     assert.equal(Buffer.from(report.result.content[0].resource.blob, "base64").subarray(0, 5).toString(), "%PDF-");
+    const inUseCategory = await call("tools/call", { name: "delete_category", arguments: { categoryId, confirm: true } });
+    assert.equal(JSON.parse(inUseCategory.result.content[0].text).code, "CATEGORY_IN_USE");
     const unconfirmed = await call("tools/call", { name: "delete_expense", arguments: { expenseId, confirm: false } });
     assert.equal(unconfirmed.result.isError, true);
     assert.deepEqual(JSON.parse(unconfirmed.result.content[0].text), {
@@ -75,6 +83,8 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     assert.equal(JSON.parse(deleted.result.content[0].text).deleted, true);
     assert.equal(JSON.parse(deleted.result.content[0].text).budget.monthCents, 0);
     assert.deepEqual(readdirSync(proofDirectory), []);
+    const deletedCategory = await call("tools/call", { name: "delete_category", arguments: { categoryId, confirm: true } });
+    assert.equal(JSON.parse(deletedCategory.result.content[0].text).deleted, true);
   } finally {
     database.close();
     rmSync(proofDirectory, { recursive: true, force: true });
