@@ -1,6 +1,9 @@
 import Database from "better-sqlite3";
+import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_USERNAME, hashPassword } from "./auth";
+import { DEFAULT_EXPENSE_CATEGORIES } from "./categories";
 
 const defaultDatabasePath = "data/financial-tracker.db";
 
@@ -16,10 +19,16 @@ export function openDatabase(): Database.Database {
   const path = databasePath();
   mkdirSync(dirname(path), { recursive: true });
 
-  return new Database(path);
+  const database = new Database(path);
+  database.pragma("foreign_keys = ON");
+  database.pragma("busy_timeout = 5000");
+  return database;
 }
 
 export function initializeDatabase(database = openDatabase()): void {
+  database.pragma("foreign_keys = ON");
+  createUsersTable(database);
+  createBootstrapAdmin(database);
   const columns = database
     .prepare("SELECT name FROM pragma_table_info('expenses')")
     .all() as Array<{ name: string }>;
@@ -32,154 +41,223 @@ export function initializeDatabase(database = openDatabase()): void {
       database.exec("ALTER TABLE expenses RENAME TO expenses_legacy;");
       createExpensesTable(database);
       database.exec(`
-        INSERT INTO expenses (id, amount_cents, description, category, date, created_at)
-        SELECT id, amount_cents, description, 'Other', spent_on, created_at
+        INSERT INTO expenses (id, user_id, amount_cents, description, category, date, created_at)
+        SELECT id, 1, amount_cents, description, 'Other', spent_on, created_at
         FROM expenses_legacy;
         DROP TABLE expenses_legacy;
       `);
     })();
-    createCategoryBudgetsTable(database);
-    createCustomExpenseCategoriesTable(database);
-    createRecurringExpensesTable(database);
-    createPortabilityTables(database);
-    createAuthTables(database);
-    return;
+  } else {
+    createExpensesTable(database);
+    if (columns.length > 0 && !columns.some((column) => column.name === "category")) {
+      database.exec("ALTER TABLE expenses ADD COLUMN category TEXT NOT NULL DEFAULT 'Other';");
+    }
+    if (columns.length > 0 && !columns.some((column) => column.name === "user_id")) {
+      database.exec("ALTER TABLE expenses ADD COLUMN user_id INTEGER REFERENCES users(id);");
+      database.exec("UPDATE expenses SET user_id = 1 WHERE user_id IS NULL;");
+    }
   }
-
-  createExpensesTable(database);
-  if (columns.length > 0 && !columns.some((column) => column.name === "category")) {
-    database.exec("ALTER TABLE expenses ADD COLUMN category TEXT NOT NULL DEFAULT 'Other';");
-  }
-  createCategoryBudgetsTable(database);
-  createCustomExpenseCategoriesTable(database);
-  createRecurringExpensesTable(database);
-  createPortabilityTables(database);
-  createAuthTables(database);
+  createTokensTable(database);
+  migrateTokens(database);
+  migrateBudgetTable(database);
+  createExpenseSources(database);
+  createProofsTable(database);
+  createExpenseCategories(database);
+  createAppSecretsTable(database);
+  createSessionsTable(database);
+  createIndexes(database);
 }
 
-/** Authentication is deliberately separate from financial records. */
-function createAuthTables(database: Database.Database): void {
+function createExpenseCategories(database: Database.Database): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS auth_account (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
+    CREATE TABLE IF NOT EXISTS expense_categories (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      name TEXT NOT NULL COLLATE NOCASE,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS expense_categories_user_name
+      ON expense_categories(user_id, name COLLATE NOCASE);
+  `);
+  database.prepare("UPDATE expenses SET category = 'Other' WHERE TRIM(category) = ''").run();
+  const insert = database.prepare(`
+    INSERT OR IGNORE INTO expense_categories (user_id, name, created_at)
+    VALUES (?, ?, ?)
+  `);
+  const createdAt = new Date().toISOString();
+  const users = database.prepare("SELECT id FROM users").all() as Array<{ id: number }>;
+  for (const { id } of users) {
+    for (const name of DEFAULT_EXPENSE_CATEGORIES) insert.run(id, name, createdAt);
+  }
+  database.exec(`
+    INSERT OR IGNORE INTO expense_categories (user_id, name, created_at)
+    SELECT DISTINCT user_id, TRIM(category), datetime('now')
+    FROM expenses
+    WHERE TRIM(category) <> '';
+  `);
+}
+
+function createAppSecretsTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_secrets (
+      name TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  if (!database.prepare("SELECT 1 FROM app_secrets WHERE name = 'session_jwt'").get()) {
+    database.prepare("INSERT OR IGNORE INTO app_secrets (name, value, created_at) VALUES ('session_jwt', ?, ?)")
+      .run(randomBytes(32).toString("base64url"), new Date().toISOString());
+  }
+}
+
+function createUsersTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL COLLATE NOCASE,
+      role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
       password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS auth_sessions (
-      id TEXT PRIMARY KEY,
-      csrf_token TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      revoked_at TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at);
-    CREATE TABLE IF NOT EXISTS auth_throttle (
-      scope TEXT PRIMARY KEY,
-      attempts INTEGER NOT NULL,
+      must_change_password INTEGER NOT NULL DEFAULT 1 CHECK (must_change_password IN (0, 1)),
+      failed_login_count INTEGER NOT NULL DEFAULT 0,
       locked_until TEXT,
-      updated_at TEXT NOT NULL
-    );
-  `);
-}
-
-/** Additive metadata tables keep the original expense ledger readable by older clients. */
-function createPortabilityTables(database: Database.Database): void {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS expense_tags (
-      expense_id INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
-      tag TEXT NOT NULL CHECK (length(tag) BETWEEN 1 AND 50),
-      PRIMARY KEY (expense_id, tag)
-    );
-    CREATE TABLE IF NOT EXISTS expense_splits (
-      id INTEGER PRIMARY KEY,
-      expense_id INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
-      category TEXT NOT NULL,
-      amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
-      position INTEGER NOT NULL CHECK (position >= 0),
-      UNIQUE (expense_id, position)
-    );
-    CREATE TABLE IF NOT EXISTS categorization_rules (
-      id INTEGER PRIMARY KEY,
-      match_type TEXT NOT NULL CHECK (match_type IN ('description', 'merchant')),
-      pattern TEXT NOT NULL CHECK (length(pattern) BETWEEN 1 AND 120),
-      category TEXT NOT NULL,
-      position INTEGER NOT NULL UNIQUE CHECK (position >= 0),
       created_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS expense_tags_tag_idx ON expense_tags(tag);
-    CREATE INDEX IF NOT EXISTS expense_splits_expense_idx ON expense_splits(expense_id, position);
-    CREATE INDEX IF NOT EXISTS categorization_rules_position_idx ON categorization_rules(position);
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users(username COLLATE NOCASE);
   `);
 }
 
-/** This is additive so databases created before budgets retain every expense. */
-function createCategoryBudgetsTable(database: Database.Database): void {
+function createBootstrapAdmin(database: Database.Database): void {
+  if (database.prepare("SELECT 1 FROM users WHERE id = 1").get()) return;
+  database.prepare(`
+    INSERT INTO users (id, username, role, password_hash, must_change_password, created_at)
+    VALUES (1, ?, 'admin', ?, 1, ?)
+  `).run(DEFAULT_ADMIN_USERNAME, hashPassword(DEFAULT_ADMIN_PASSWORD), new Date().toISOString());
+}
+
+function createProofsTable(database: Database.Database): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS category_budgets (
-      category TEXT NOT NULL,
-      month TEXT NOT NULL,
-      amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+    CREATE TABLE IF NOT EXISTS expense_proofs (
+      id TEXT PRIMARY KEY,
+      expense_id INTEGER NOT NULL REFERENCES expenses(id),
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      source_id TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY (category, month)
+      UNIQUE (expense_id, source_id)
     );
+    CREATE INDEX IF NOT EXISTS expense_proofs_expense_id ON expense_proofs(expense_id);
   `);
 }
 
-/** Custom categories are additive metadata; existing ledger rows remain untouched. */
-function createCustomExpenseCategoriesTable(database: Database.Database): void {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS custom_expense_categories (
-      name TEXT NOT NULL,
-      normalized_name TEXT NOT NULL PRIMARY KEY,
-      created_at TEXT NOT NULL
-    );
-  `);
-}
-
-/** Kept separate from the ledger: a plan only becomes an expense when completed. */
-function createRecurringExpensesTable(database: Database.Database): void {
-  const columns = database.prepare("SELECT name FROM pragma_table_info('recurring_expenses')").all() as Array<{ name: string }>;
-  // Older plans always had an amount, so preserve them as fixed while making
-  // room for variable plans whose amount is supplied only when paid.
-  if (columns.length > 0 && !columns.some((column) => column.name === "amount_type")) {
+function createExpenseSources(database: Database.Database): void {
+  const columns = database.prepare("SELECT name FROM pragma_table_info('expense_sources')").all() as Array<{ name: string }>;
+  if (columns.length > 0 && !columns.some((column) => column.name === "user_id")) {
     database.transaction(() => {
-      database.exec("DROP INDEX IF EXISTS recurring_expenses_due_idx;");
-      database.exec("ALTER TABLE recurring_expenses RENAME TO recurring_expenses_legacy;");
-      createRecurringExpensesTableSchema(database);
+      database.exec("ALTER TABLE expense_sources RENAME TO expense_sources_legacy;");
       database.exec(`
-        INSERT INTO recurring_expenses (id, amount_cents, amount_type, description, category, frequency, next_due_at, active, created_at, updated_at)
-        SELECT id, amount_cents, 'fixed', description, category, frequency, next_due_at, active, created_at, updated_at
-        FROM recurring_expenses_legacy;
-        DROP TABLE recurring_expenses_legacy;
+        CREATE TABLE expense_sources (
+          user_id INTEGER NOT NULL REFERENCES users(id),
+          source_id TEXT NOT NULL,
+          expense_id INTEGER NOT NULL REFERENCES expenses(id),
+          PRIMARY KEY (user_id, source_id)
+        );
+        INSERT INTO expense_sources (user_id, source_id, expense_id)
+        SELECT expenses.user_id, expense_sources_legacy.source_id, expense_sources_legacy.expense_id
+        FROM expense_sources_legacy JOIN expenses ON expenses.id = expense_sources_legacy.expense_id;
+        DROP TABLE expense_sources_legacy;
       `);
     })();
     return;
   }
-  createRecurringExpensesTableSchema(database);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS expense_sources (
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      source_id TEXT NOT NULL,
+      expense_id INTEGER NOT NULL REFERENCES expenses(id),
+      PRIMARY KEY (user_id, source_id)
+    );
+  `);
 }
 
-function createRecurringExpensesTableSchema(database: Database.Database): void {
+function migrateBudgetTable(database: Database.Database): void {
+  const columns = database.prepare("SELECT name FROM pragma_table_info('budget_settings')").all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === "id")) {
+    database.transaction(() => {
+      database.exec("ALTER TABLE budget_settings RENAME TO budget_settings_legacy;");
+      database.exec(`
+        CREATE TABLE budget_settings (
+          user_id INTEGER PRIMARY KEY REFERENCES users(id),
+          monthly_limit_cents INTEGER NOT NULL CHECK (monthly_limit_cents > 0)
+        );
+        INSERT INTO budget_settings (user_id, monthly_limit_cents)
+        SELECT 1, monthly_limit_cents FROM budget_settings_legacy WHERE id = 1;
+        DROP TABLE budget_settings_legacy;
+      `);
+    })();
+    return;
+  }
   database.exec(`
-    CREATE TABLE IF NOT EXISTS recurring_expenses (
-      id INTEGER PRIMARY KEY,
-      amount_cents INTEGER,
-      amount_type TEXT NOT NULL DEFAULT 'fixed' CHECK (amount_type IN ('fixed', 'variable')),
-      description TEXT NOT NULL,
-      category TEXT NOT NULL,
-      frequency TEXT NOT NULL CHECK (frequency IN ('weekly', 'monthly')),
-      next_due_at TEXT NOT NULL,
-      active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      CHECK (
-        (amount_type = 'fixed' AND amount_cents > 0)
-        OR (amount_type = 'variable' AND amount_cents IS NULL)
-      )
+    CREATE TABLE IF NOT EXISTS budget_settings (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id),
+      monthly_limit_cents INTEGER NOT NULL CHECK (monthly_limit_cents > 0)
     );
-    CREATE INDEX IF NOT EXISTS recurring_expenses_due_idx
-      ON recurring_expenses (active, next_due_at, id);
+  `);
+}
+
+function createTokensTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      label TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
+function migrateTokens(database: Database.Database): void {
+  const columns = database.prepare("SELECT name FROM pragma_table_info('api_tokens')").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "user_id")) {
+    database.exec("ALTER TABLE api_tokens ADD COLUMN user_id INTEGER REFERENCES users(id);");
+    database.exec("UPDATE api_tokens SET user_id = 1 WHERE user_id IS NULL;");
+  }
+}
+
+function createSessionsTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
+function createIndexes(database: Database.Database): void {
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS expenses_user_date_id ON expenses(user_id, date DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS expenses_user_category ON expenses(user_id, category COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS api_tokens_user_id_id ON api_tokens(user_id, id DESC);
+    CREATE INDEX IF NOT EXISTS expense_sources_expense_id ON expense_sources(expense_id);
+    CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS sessions_expires_at ON sessions(expires_at);
+    CREATE TRIGGER IF NOT EXISTS expenses_require_user_insert
+      BEFORE INSERT ON expenses WHEN NEW.user_id IS NULL
+      BEGIN SELECT RAISE(ABORT, 'expenses.user_id is required'); END;
+    CREATE TRIGGER IF NOT EXISTS expenses_require_user_update
+      BEFORE UPDATE OF user_id ON expenses WHEN NEW.user_id IS NULL
+      BEGIN SELECT RAISE(ABORT, 'expenses.user_id is required'); END;
+    CREATE TRIGGER IF NOT EXISTS api_tokens_require_user_insert
+      BEFORE INSERT ON api_tokens WHEN NEW.user_id IS NULL
+      BEGIN SELECT RAISE(ABORT, 'api_tokens.user_id is required'); END;
+    CREATE TRIGGER IF NOT EXISTS api_tokens_require_user_update
+      BEFORE UPDATE OF user_id ON api_tokens WHEN NEW.user_id IS NULL
+      BEGIN SELECT RAISE(ABORT, 'api_tokens.user_id is required'); END;
   `);
 }
 
@@ -187,6 +265,7 @@ function createExpensesTable(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS expenses (
       id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
       amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
       description TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT 'Other',

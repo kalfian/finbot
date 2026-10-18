@@ -308,3 +308,12 @@
     gap: 0;
   }
 }
+
+/* Proof actions share the dashboard palette while keeping the upstream upload flow. */
+.ledger-workspace .proof-controls { margin-top: 8px; }
+.ledger-workspace .proof-toggle { min-height: 32px; padding: 4px 0; background: transparent; color: var(--accent); font-size: .72rem; }
+.ledger-workspace .proof-details { display: grid; gap: 8px; padding: 12px 0; }
+.ledger-workspace .proof-details a { overflow-wrap: anywhere; }
+.ledger-workspace .proof-add { display: grid; gap: 8px; }
+.ledger-workspace .proof-add input { width: 100%; font-size: .7rem; }
+@media (max-width: 900px) { .rail-nav { overflow-x: auto; flex-wrap: nowrap; } .rail-nav a { flex-shrink: 0; white-space: nowrap; } }

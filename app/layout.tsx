@@ -12,6 +12,7 @@ const editorialFont = localFont({
   weight: "400",
   display: "swap",
 });
+import "./legacy-surface.css";
 import "./globals.css";
 import { EXPENSE_RECORDER_DESIGN_CSS } from "@/lib/expense-recorder-design";
 
@@ -24,7 +25,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const themeScript =
-    "try { const saved = localStorage.getItem('ledger-theme'); const theme = saved === 'light' || saved === 'dark' ? saved : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; } catch {}";
+    "try { const saved = localStorage.getItem('ledger-theme') || localStorage.getItem('expense-tracker-theme'); const theme = saved === 'light' || saved === 'dark' ? saved : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; } catch {}";
   return (
     <html
       lang="en"

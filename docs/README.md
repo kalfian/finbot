@@ -1,21 +1,16 @@
-# Financial Tracker documentation
+# Finbot documentation
 
-This documentation describes the Financial Tracker implementation in this repository. It is a local, single-user Ledger application: a Next.js dashboard backed by SQLite, with password-gated local access.
+Ledger is a multi-user expense dashboard backed by SQLite. Browser, REST v1, and MCP operations use the same per-account ownership rules.
 
-| Document | Covers |
+| Document | Scope |
 | --- | --- |
-| [Product and dashboard](product-and-dashboard.md) | Product direction, navigation, responsive layout, accessibility, and dashboard behavior |
-| [Ledger guide](ledger-guide.md) | Expenses, periods, filters, reporting, budgets, plans, calendar, CSV, rules, tags, and splits |
-| [API reference](api.md) | JSON and CSV endpoints, query parameters, request rules, and response shapes |
-| [Data model](data-model.md) | SQLite location, initialization, schema, migrations, and data conventions |
-| [Local authentication and security](auth-and-security.md) | Secure setup, local operations, sessions, request protection, and recovery considerations |
-| [Development and verification](development-and-verification.md) | Prerequisites, commands, automated tests, browser checks, and release verification |
+| [Product and dashboard](product-and-dashboard.md) | Dashboard, navigation, themes and accessibility |
+| [Ledger guide](ledger-guide.md) | Entry, filters, proofs, calendar, exports and integration settings |
+| [API reference](api.md) | Current REST and MCP entry points |
+| [Data model](data-model.md) | User-owned SQLite data and private files |
+| [Authentication](auth-and-security.md) | Bootstrap, passwords, sessions and authorization |
+| [Verification](development-and-verification.md) | Tests, builds and isolated browser checks |
+| [MCP specification](mcp-end-to-end.md) | Agent contracts and errors |
+| [Hermes guide](hermes-agent.md) | Agent adapter workflow |
 
-## Scope and terminology
-
-- Amounts are positive integer minor units in the API and database. The browser formats them as Indonesian rupiah (IDR) with two fractional digits.
-- Ledger timestamps are ISO-8601 UTC instants. Browser `datetime-local` inputs are converted from the viewer's local time before saving.
-- The supported expense categories are Food, Transport, Bills, Shopping, Health, and Other.
-- This is local-first storage, not a hosted multi-account service. Back up the SQLite database before operating on it outside the application.
-
-The root [README](../README.md) is retained for the repository's original quick-start context. These documents reflect the current implemented dashboard and APIs.
+Amounts use integer IDR minor units. Inputs use local date/time converted to canonical UTC timestamps. Back up the database and private proof directory together. See the root [README](../README.md) for setup and screenshots.

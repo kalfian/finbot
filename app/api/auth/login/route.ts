@@ -1,16 +1,24 @@
+import { createSessionRepository, createUserRepository, requireSameOrigin, sessionCookie } from "@/lib/auth";
 import { getDatabase } from "@/lib/db";
-import { login, signedSessionValue, SESSION_COOKIE } from "@/lib/auth";
-import { requestIsSecure, validRequestOrigin } from "@/lib/auth-guard";
 
 export const runtime = "nodejs";
+
 export async function POST(request: Request): Promise<Response> {
-  if (!validRequestOrigin(request)) return Response.json({ error: "Invalid request origin." }, { status: 403 });
-  const body = await request.json().catch(() => null) as { password?: unknown } | null;
-  const result = login(getDatabase(), body?.password, request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local");
-  if (!result.session) return Response.json({ error: "Unable to sign in." }, { status: 401 });
-  const value = signedSessionValue(result.session.id);
-  if (!value) return Response.json({ error: "Unable to sign in." }, { status: 503 });
-  const response = Response.json({ ok: true });
-  response.headers.append("set-cookie", `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${requestIsSecure(request) ? "; Secure" : ""}`);
-  return response;
+  const denied = requireSameOrigin(request);
+  if (denied) return denied;
+  let body: unknown;
+  try { body = await request.json(); } catch { return Response.json({ error: "Valid JSON is required." }, { status: 400 }); }
+  const username = body && typeof body === "object" && "username" in body ? body.username : null;
+  const password = body && typeof body === "object" && "password" in body ? body.password : null;
+  if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
+    return Response.json({ error: "Username and password are required." }, { status: 400 });
+  }
+  const database = getDatabase();
+  const user = createUserRepository(database).authenticate(username, password);
+  if (!user) return Response.json({ error: "Invalid username or password." }, { status: 401 });
+  const session = createSessionRepository(database).create(user.id);
+  return Response.json({ user, accessToken: session.token, tokenType: "Bearer", expiresAt: session.expiresAt.toISOString() }, { headers: {
+    "Cache-Control": "no-store",
+    "Set-Cookie": sessionCookie(session.token, session.expiresAt, new URL(request.url).protocol === "https:"),
+  } });
 }

@@ -2,9 +2,13 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { formatExpenseDate } from "@/lib/date-time";
-import { type CalendarExpense } from "@/lib/expense-calendar";
+import type { Expense } from "@/lib/expenses";
+import ProofControls from "./proof-controls";
 import {
-  EXPENSE_CATEGORIES,
+  queryDashboardExpenses,
+  type CategorySummary,
+} from "@/lib/dashboard-expenses";
+import {
   getBrowserLocalDateTime,
   saveExpense,
   validateExpenseForm,
@@ -14,17 +18,9 @@ import { formatCurrency, toAmountCents } from "@/lib/money";
 import { periodRange } from "@/lib/periods";
 import { Icon, categoryIcon } from "./components/ui-icon";
 import { Modal } from "./components/modal";
-import type { CategorySummary } from "@/lib/expenses";
 import { apiFetch } from "@/lib/client-fetch";
 
-type Expense = CalendarExpense;
-type ExpenseResult = {
-  expenses: Expense[];
-  totalCount: number;
-  insights?: { categories: CategorySummary[] };
-  summary?: { totalCents: number; transactionCount: number };
-};
-type CategoriesResult = { categories: string[] };
+type CategoriesResult = { categories: { name: string }[] };
 type Filters = {
   search: string;
   category: string;
@@ -113,7 +109,7 @@ export default function ExpenseTracker() {
   const [notice, setNotice] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Food");
+  const [category, setCategory] = useState("");
   const [date, setDate] = useState("");
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [newCategory, setNewCategory] = useState("");
@@ -130,47 +126,42 @@ export default function ExpenseTracker() {
   const [removing, setRemoving] = useState(false);
   const [monthCategories, setMonthCategories] = useState<CategorySummary[]>([]);
   const [monthLabel, setMonthLabel] = useState("This month");
-  const categories = [...EXPENSE_CATEGORIES, ...customCategories];
+  const categories = customCategories;
   const load = useCallback(async () => {
     const request = ++loadSequence.current;
     setLoading(true);
     setError("");
     try {
-      const [recentResponse, todayResponse, monthResponse] = await Promise.all([
-        apiFetch(
-          `/api/expenses?${filterQuery(filters, PAGE_SIZE, page * PAGE_SIZE)}`,
-        ),
-        apiFetch(`/api/expenses?${queryFor(periodRange("today"), 1)}`),
-        apiFetch(`/api/expenses?${queryFor(periodRange("month"), 1)}`),
-      ]);
-      const [recent, today, month] = (await Promise.all([
-        recentResponse.json(),
-        todayResponse.json(),
-        monthResponse.json(),
-      ])) as [unknown, unknown, unknown];
+      const response = await apiFetch("/api/v1/expenses");
+      const body: unknown = await response.json();
       if (request !== loadSequence.current) return;
       if (
-        !recentResponse.ok ||
-        !recent ||
-        typeof recent !== "object" ||
-        !("expenses" in recent) ||
-        !Array.isArray(recent.expenses)
+        !response.ok ||
+        !body ||
+        typeof body !== "object" ||
+        !("expenses" in body) ||
+        !Array.isArray(body.expenses)
       )
         throw Error(
-          apiMessage(
-            recent,
-            "We couldn't load your expenses. Please try again.",
-          ),
+          apiMessage(body, "We couldn't load your expenses. Please try again."),
         );
-      if (!todayResponse.ok || !monthResponse.ok)
-        throw Error("We couldn't load your totals. Please try again.");
-      const recentData = recent as ExpenseResult;
+      const records = body.expenses as Expense[];
+      const recentData = queryDashboardExpenses(
+        records,
+        filterQuery(filters, PAGE_SIZE, page * PAGE_SIZE),
+      );
+      const todayData = queryDashboardExpenses(
+        records,
+        queryFor(periodRange("today"), 1),
+      );
+      const monthData = queryDashboardExpenses(
+        records,
+        queryFor(periodRange("month"), 1),
+      );
       if (page > 0 && page * PAGE_SIZE >= recentData.totalCount) {
         setPage(Math.max(0, Math.ceil(recentData.totalCount / PAGE_SIZE) - 1));
         return;
       }
-      const todayData = today as ExpenseResult;
-      const monthData = month as ExpenseResult;
       setItems(recentData.expenses);
       setTotalCount(recentData.totalCount);
       setTodayTotal(todayData.summary?.totalCents ?? 0);
@@ -200,7 +191,7 @@ export default function ExpenseTracker() {
   useEffect(() => {
     void (async () => {
       try {
-        const response = await apiFetch("/api/categories");
+        const response = await apiFetch("/api/v1/categories");
         const body: unknown = await response.json();
         if (
           !response.ok ||
@@ -208,10 +199,21 @@ export default function ExpenseTracker() {
           typeof body !== "object" ||
           !("categories" in body) ||
           !Array.isArray(body.categories) ||
-          !body.categories.every((category) => typeof category === "string")
+          !body.categories.every(
+            (category) =>
+              category &&
+              typeof category === "object" &&
+              typeof category.name === "string",
+          )
         )
           throw Error("We couldn't load categories.");
-        setCustomCategories((body as CategoriesResult).categories);
+        const names = (body as CategoriesResult).categories.map(
+          (item) => item.name,
+        );
+        setCustomCategories(names);
+        setCategory((current) =>
+          names.includes(current) ? current : (names[0] ?? ""),
+        );
       } catch (caught) {
         setError(
           caught instanceof Error
@@ -236,7 +238,7 @@ export default function ExpenseTracker() {
   function resetForm() {
     setAmount("");
     setDescription("");
-    setCategory("Food");
+    setCategory(categories[0] ?? "");
     setDate(getBrowserLocalDateTime());
     setEditing(undefined);
   }
@@ -256,10 +258,10 @@ export default function ExpenseTracker() {
     setSaving(true);
     try {
       if (editing) {
-        const response = await apiFetch("/api/expenses", {
-          method: "PUT",
+        const response = await apiFetch(`/api/v1/expenses/${editing.id}`, {
+          method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id: editing.id, ...valid.value }),
+          body: JSON.stringify(valid.value),
         });
         const body: unknown = await response.json();
         if (!response.ok)
@@ -288,7 +290,7 @@ export default function ExpenseTracker() {
     setError("");
     setNotice("");
     try {
-      const response = await apiFetch("/api/categories", {
+      const response = await apiFetch("/api/v1/categories", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: newCategory }),
@@ -299,10 +301,13 @@ export default function ExpenseTracker() {
         !body ||
         typeof body !== "object" ||
         !("category" in body) ||
-        typeof body.category !== "string"
+        !body.category ||
+        typeof body.category !== "object" ||
+        !("name" in body.category) ||
+        typeof body.category.name !== "string"
       )
         throw Error(apiMessage(body, "We couldn't save this category."));
-      const created = body.category;
+      const created = body.category.name;
       setCustomCategories((values) =>
         values.includes(created) ? values : [...values, created],
       );
@@ -335,7 +340,7 @@ export default function ExpenseTracker() {
     setRemoving(true);
     setError("");
     try {
-      const response = await apiFetch("/api/expenses", {
+      const response = await apiFetch(`/api/v1/expenses/${expense.id}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: expense.id }),
@@ -344,7 +349,7 @@ export default function ExpenseTracker() {
       if (!response.ok)
         throw Error(apiMessage(body, "We couldn't delete this expense."));
       setDeleting(undefined);
-      setUndo(expense);
+      setUndo(expense.proofCount ? undefined : expense);
       setNotice("Expense deleted.");
       await load();
     } catch (caught) {
@@ -390,26 +395,22 @@ export default function ExpenseTracker() {
     setDate(getBrowserLocalDateTime(value));
   }
   async function fetchFilteredExpenses() {
-    const all: Expense[] = [];
-    for (let offset = 0; ; offset += 100) {
-      const response = await apiFetch(
-        `/api/expenses?${filterQuery(filters, 100, offset)}`,
-      );
-      const body: unknown = await response.json();
-      if (
-        !response.ok ||
-        !body ||
-        typeof body !== "object" ||
-        !("expenses" in body) ||
-        !Array.isArray(body.expenses)
-      )
-        throw Error(
-          apiMessage(body, "We couldn't load all matching expenses."),
-        );
-      all.push(...(body as ExpenseResult).expenses);
-      if (all.length >= (body as ExpenseResult).totalCount) return all;
-    }
+    const response = await apiFetch("/api/v1/expenses");
+    const body: unknown = await response.json();
+    if (
+      !response.ok ||
+      !body ||
+      typeof body !== "object" ||
+      !("expenses" in body) ||
+      !Array.isArray(body.expenses)
+    )
+      throw Error(apiMessage(body, "We couldn't load all matching expenses."));
+    return queryDashboardExpenses(
+      body.expenses as Expense[],
+      filterQuery(filters, Number.MAX_SAFE_INTEGER),
+    ).expenses;
   }
+
   async function downloadHtml() {
     setExporting(true);
     try {
@@ -490,17 +491,29 @@ export default function ExpenseTracker() {
             <span>IDR</span>
           </div>
           <div className="hero-amount">
-            {!hasSummary ? (loading ? "..." : "Unavailable") : formatCurrency(monthTotal)}
+            {!hasSummary
+              ? loading
+                ? "..."
+                : "Unavailable"
+              : formatCurrency(monthTotal)}
           </div>
           <p className="hero-caption">Total spent this month</p>
           <div className="hero-footer">
             <div>
               <span>Spent today</span>
-              <strong>{!hasSummary ? (loading ? "..." : "Unavailable") : formatCurrency(todayTotal)}</strong>
+              <strong>
+                {!hasSummary
+                  ? loading
+                    ? "..."
+                    : "Unavailable"
+                  : formatCurrency(todayTotal)}
+              </strong>
             </div>
             <div>
               <span>Transactions this month</span>
-              <strong>{!hasSummary ? (loading ? "..." : "Unavailable") : monthCount}</strong>
+              <strong>
+                {!hasSummary ? (loading ? "..." : "Unavailable") : monthCount}
+              </strong>
             </div>
           </div>
         </div>
@@ -510,7 +523,11 @@ export default function ExpenseTracker() {
             <span>This month</span>
           </div>
           {!hasSummary ? (
-            <p className="breakdown-empty">{loading ? "Getting the full picture..." : "Your spending breakdown is temporarily unavailable."}</p>
+            <p className="breakdown-empty">
+              {loading
+                ? "Getting the full picture..."
+                : "Your spending breakdown is temporarily unavailable."}
+            </p>
           ) : monthCategories.length ? (
             <>
               <div className="mix-bar" aria-hidden="true">
@@ -729,6 +746,14 @@ export default function ExpenseTracker() {
                 <div className="row-description">
                   <strong>{expense.description}</strong>
                   <span>{expense.category}</span>
+                  <ProofControls
+                    expenseId={expense.id}
+                    count={expense.proofCount}
+                    onChange={async () => {
+                      await load();
+                      return true;
+                    }}
+                  />
                 </div>
                 <time className="row-date" dateTime={expense.date}>
                   {formatExpenseDate(expense.date)}
@@ -927,7 +952,10 @@ export default function ExpenseTracker() {
         busy={removing}
       >
         <p className="muted">
-          {deleting?.description} will be removed. You can undo this afterward.
+          {deleting?.description} will be removed.{" "}
+          {deleting?.proofCount
+            ? "Its proof files will also be permanently deleted. This cannot be undone."
+            : "Undo creates a replacement record with a new ID."}
         </p>
         {error && (
           <p className="form-message error" role="alert">

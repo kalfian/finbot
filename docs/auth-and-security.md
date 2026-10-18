@@ -1,32 +1,21 @@
-# Local authentication and security
+# Authentication and security
 
-## Initial setup
+## Accounts and first login
 
-Before exposing the dashboard, set the server-only `FINANCIAL_TRACKER_SESSION_SECRET` environment value in a local environment file or your process manager. It must be at least 32 characters and remain available and stable across restarts; rotating it invalidates signed browser session cookies. Keep it out of source control and shell history where practical.
+The upstream multi-user authentication model is retained. A fresh database creates administrator `admin` with temporary password `123456`. Financial APIs, integrations and the dashboard are blocked until that password is changed. Administrators create additional users; every account has its own expenses, categories, proofs, monthly limit, source IDs and tokens.
 
-Start the service and visit the dashboard. On a fresh database, the first-run screen creates the only local administrator account. It requires a confirmed password of at least 8 characters, stores only a salted password verifier in SQLite, and immediately establishes a seven-day server-side session. No bootstrap password is required or supported. Competing first-run submissions are atomically constrained to a single account.
+Passwords use salted scrypt hashes. New passwords require 8-128 characters with a letter and a digit. Five failed login attempts lock that account for 15 minutes. There is no password-reset email workflow.
 
-If either required setup condition is absent, the application shows a configuration screen and does not expose financial data.
+## Sessions and authorization
 
-## Ongoing account operations
+Login returns a revocable JWT and stores it in an HttpOnly, SameSite=Lax browser cookie, with Secure on HTTPS. Session records support revocation. Signing material is generated in the database's app_secrets table; FINANCIAL_TRACKER_SESSION_SECRET is not used.
 
-- Sign in through the local dashboard. A successful sign-in creates a seven-day server-side session.
-- Use Settings to change the password. The application verifies the current password, stores a new verifier, revokes all sessions, clears the current browser session, and requires sign-in again.
-- Use Logout to revoke only the current active session and clear its cookie.
-- After five failed login attempts from the same client-address scope, that scope is locked for 15 minutes. A successful login clears its failure counter.
+Browser writes pass same-origin checks and use their session cookie. REST v1 and MCP also accept Bearer login JWTs or generated integration tokens, each scoped to its owning user. Generated tokens cannot change passwords. Server page guards enforce login, password-change requirements, and administrator-only user management.
 
-There is no second account, password-reset email flow, or recovery API. Preserve secure operational access to the local host and database backup. Direct database changes to authentication records should be treated as an emergency recovery procedure and tested on a copy first.
+Changing a password revokes existing sessions and issues a replacement session to the caller. Logout revokes the current session and clears the cookie. Credentials are never stored in browser localStorage; only theme preference is stored there.
 
-## Request protections
+## Operations
 
-- The browser receives a signed, HTTP-only, SameSite=Lax session cookie. Its Secure flag is enabled when the incoming request or trusted proxy headers indicate HTTPS.
-- Session IDs, expiry, revocation state, and a CSRF verifier are stored server-side. Cookie signatures use an HMAC derived from the session-secret environment value; tampered or expired values fail authentication.
-- All application APIs require an authenticated session. State changes additionally require a matching CSRF request header and same-origin request validation. The client helper reads the CSRF value supplied to the authenticated page and adds it to non-safe requests.
-- Login requires a present, valid same-origin Origin header. The origin calculation is proxy-aware through forwarded host/protocol headers; configure those headers correctly at a trusted reverse proxy.
-- Password verification uses a memory-hard scrypt-derived verifier and timing-safe comparison.
+Bind deliberately, use HTTPS and network restrictions for remote access, and protect database/proof files with host permissions. Back up SQLite consistently with its adjacent proofs directory. Do not commit credentials, database files, tokens or private receipts.
 
-## Deployment and data-handling guidance
-
-This project is designed for local use. If it is made reachable beyond a trusted local network, terminate TLS at a correctly configured proxy, restrict access at the network layer, protect the database file with host permissions and backups, and maintain the environment values in a secrets facility. Do not place access material in `.env.example`, repository documentation, issue comments, client-side code, CSV exports, screenshots, or support logs.
-
-The application does not implement multi-user authorization, audit trails, encryption at rest, account recovery, or automated backup retention. Evaluate and add those controls before treating it as a shared or Internet-facing financial system.
+The integrated release retains the remote multi-user schema and its supported migrations. The earlier unpublished single-account snapshot (7930211) used a different auth schema; importing data from that prototype is a separate migration task, not an automatic account conversion. Do not point a running service at that prototype database without a backup and migration review.

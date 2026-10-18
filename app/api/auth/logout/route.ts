@@ -1,8 +1,27 @@
+import { clearSessionCookie, createSessionRepository, requireSameOrigin, sessionToken } from "@/lib/auth";
 import { getDatabase } from "@/lib/db";
-import { revoke, SESSION_COOKIE } from "@/lib/auth";
-import { requestIsSecure, requestSession, requireApi } from "@/lib/auth-guard";
-export async function POST(request: Request): Promise<Response> {
-  const denied = requireApi(request, true); if (denied) return denied;
-  const active = await requestSession(request); revoke(getDatabase(), active?.id);
-  const response = Response.json({ ok: true }); response.headers.append("set-cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${requestIsSecure(request) ? "; Secure" : ""}`); return response;
+
+export const runtime = "nodejs";
+
+export function POST(request: Request): Response {
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  if (bearer?.startsWith("et_")) {
+    return Response.json({ error: "Revoke generated tokens from the Integrations page." }, { status: 400 });
+  }
+  if (!bearer) {
+    const denied = requireSameOrigin(request);
+    if (denied) return denied;
+  }
+  const token = bearer?.split(".").length === 3 ? bearer : sessionToken(request);
+  if (token) createSessionRepository(getDatabase()).revoke(token);
+  if (bearer) return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  const requestUrl = new URL(request.url);
+  const host = request.headers.get("host") ?? requestUrl.host;
+  const protocol = request.headers.get("x-forwarded-proto") ?? requestUrl.protocol.slice(0, -1);
+  return new Response(null, { status: 303, headers: {
+    Location: `${protocol}://${host}/login`,
+    "Cache-Control": "no-store",
+    "Set-Cookie": clearSessionCookie(new URL(request.url).protocol === "https:"),
+  } });
 }

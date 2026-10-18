@@ -4,28 +4,21 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import ExpenseTracker from "../app/expense-tracker";
-import { EXPENSE_RECORDER_DESIGN_CSS } from "../lib/expense-recorder-design";
+import ExpenseTracker from "../app/activity-tracker";
 import nextConfig from "../next.config";
-import { createExpenseHtmlExport } from "../lib/expense-html-export";
-import { getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, validateExpenseForm } from "../lib/expense-form";
+import { amountCentsToInput, deleteExpense, getBrowserLocalDateTime, localDateTimeToUtc, saveExpense, updateExpense, validateExpenseForm } from "../lib/expense-form";
 
-test("the tracker is a focused expense recorder with a browser-local datetime default", () => {
-  const markup = renderToStaticMarkup(createElement(ExpenseTracker));
-  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
+test("the tracker is a focused expense page with a browser-local datetime default", () => {
+  const markup = renderToStaticMarkup(createElement(ExpenseTracker, { user: { username: "tester", role: "user" } }));
+  const source = readFileSync(new URL("../app/activity-tracker.tsx", import.meta.url), "utf8");
 
   assert.doesNotMatch(markup, /<nav\b/);
-  assert.match(markup, /Your money, at a glance/);
+  assert.doesNotMatch(source, /Every expense, in one place\./);
   assert.match(source, /type="datetime-local"/);
   assert.match(source, /getBrowserLocalDateTime\(\)/);
   assert.match(source, /setDate\(getBrowserLocalDateTime\(\)\)/);
-  assert.match(source, /Add expense/);
-  assert.match(markup, /Your transactions/);
-  assert.match(markup, /This month/);
-  assert.match(source, /aria-pressed/);
-  assert.doesNotMatch(source, /category-budgets/);
-  assert.doesNotMatch(source, /recurring-expenses/);
-  assert.doesNotMatch(source, /Expense calendar/);
+  assert.match(source, /<label htmlFor="category">Category<\/label>/);
+  assert.match(source, /Clear form/);
 });
 
 test("getBrowserLocalDateTime creates a datetime-local value from local calendar values", () => {
@@ -44,20 +37,26 @@ test("localDateTimeToUtc converts the browser-local datetime before persistence"
   assert.equal(localDateTimeToUtc("2026-02-30T09:07"), null);
 });
 
+test("amountCentsToInput creates an editable decimal amount", () => {
+  assert.equal(amountCentsToInput(1500), "15");
+  assert.equal(amountCentsToInput(1550), "15.50");
+  assert.equal(amountCentsToInput(1501), "15.01");
+});
+
 test("the dev server permits the browser and workspace proxy to load client assets", () => {
   assert.deepEqual(nextConfig.allowedDevOrigins, ["127.0.0.1", "10.20.30.105"]);
 });
 
 test("the expense form uses the client submit handler without a native action", () => {
-  const markup = renderToStaticMarkup(createElement(ExpenseTracker));
-  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
+  const markup = renderToStaticMarkup(createElement(ExpenseTracker, { user: { username: "tester", role: "user" } }));
+  const source = readFileSync(new URL("../app/activity-tracker.tsx", import.meta.url), "utf8");
   const pageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-  assert.doesNotMatch(markup, /<form\b[^>]*\saction=/);
+  assert.match(markup, /<form noValidate="">/);
   assert.match(source, /^"use client";/);
   assert.match(pageSource, /import ExpenseTracker from "\.\/expense-tracker";/);
-  assert.match(source, /<form onSubmit=\{submit\} noValidate>/);
-  assert.match(source, /async function submit\(event: FormEvent\) \{\s*event\.preventDefault\(\);/);
+  assert.match(source, /<form onSubmit=\{handleSubmit\} onReset=\{handleReset\} noValidate>/);
+  assert.match(source, /async function handleSubmit\(event: FormEvent<HTMLFormElement>\) \{\s+event\.preventDefault\(\);/);
 });
 
 test("validateExpenseForm converts valid IDR input to the API request shape", () => {
@@ -69,78 +68,6 @@ test("validateExpenseForm converts valid IDR input to the API request shape", ()
   }), {
     value: { amountCents: 1250050, description: "Train fare", category: "Transport", date: new Date("2026-02-14T08:30").toISOString() },
   });
-});
-
-test("Entertainment is available as a built-in category in the recorder and client validation", () => {
-  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
-  assert.match(source, /const categories = \[\.\.\.EXPENSE_CATEGORIES, \.\.\.customCategories\]/);
-  assert.match(source, /Add category/);
-  assert.deepEqual(validateExpenseForm({
-    amount: "25000",
-    description: "Movie ticket",
-    category: "Entertainment",
-    date: "2026-02-14T08:30",
-  }), {
-    value: { amountCents: 2500000, description: "Movie ticket", category: "Entertainment", date: new Date("2026-02-14T08:30").toISOString() },
-  });
-});
-
-test("the recorder accepts a newly loaded custom category immediately", () => {
-  assert.deepEqual(validateExpenseForm({
-    amount: "12000",
-    description: "Vet visit",
-    category: "Pet Care",
-    date: "2026-02-14T08:30",
-  }, ["Food", "Pet Care"]), {
-    value: { amountCents: 1200000, description: "Vet visit", category: "Pet Care", date: new Date("2026-02-14T08:30").toISOString() },
-  });
-});
-
-test("HTML export is standalone, shares the recorder design, summarizes active filters, and escapes user supplied content", () => {
-  const html = createExpenseHtmlExport([
-    { id: 1, amountCents: 1250000, description: "Tickets <script>alert('x')</script> & snacks", category: "Entertainment", date: "2026-02-14T08:30:00.000Z" },
-    { id: 2, amountCents: 500000, description: "Coffee", category: "Food", date: "2026-02-13T08:30:00.000Z" },
-  ], "Search: tickets; Category: Entertainment");
-
-  assert.match(html, /^<!doctype html>/i);
-  assert.match(html, /Expense tracker/);
-  assert.match(html, /2 expenses/);
-  assert.match(html, /Rp\s?17\.500,00/);
-  assert.match(html, /Entertainment/);
-  assert.match(html, /Search: tickets; Category: Entertainment/);
-  assert.match(html, /Tickets &lt;script&gt;alert\(&#39;x&#39;\)&lt;\/script&gt; &amp; snacks/);
-  assert.doesNotMatch(html, /<script>alert/);
-  assert.match(html, /class="expense-page export-page"/);
-  assert.ok(html.includes(EXPENSE_RECORDER_DESIGN_CSS));
-});
-
-test("HTML export clearly represents an empty filtered result", () => {
-  const html = createExpenseHtmlExport([], "Category: Pet Care");
-  assert.match(html, /Category: Pet Care/);
-  assert.match(html, /No expenses match these filters/);
-});
-
-test("the recorder preserves its amount focus indicator and releases export URLs", () => {
-  const trackerSource = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
-  assert.match(trackerSource, /Download HTML/);
-  assert.match(trackerSource, /URL\.revokeObjectURL/);
-  assert.match(EXPENSE_RECORDER_DESIGN_CSS, /\.amount-input:focus-within \{[^}]*box-shadow: 0 0 0 3px var\(--focus-ring\)/);
-  assert.match(EXPENSE_RECORDER_DESIGN_CSS, /\.amount-input input:focus-visible \{ outline: 0;/);
-});
-
-test("the recorder exposes an accessible, collapsible complete filter set and exports all matching pages", () => {
-  const source = readFileSync(new URL("../app/expense-tracker.tsx", import.meta.url), "utf8");
-  assert.match(source, /<details className="filter-details">/);
-  assert.match(source, /htmlFor="expense-search"/);
-  assert.match(source, /htmlFor="filter-category"/);
-  assert.match(source, /htmlFor="filter-date-from"/);
-  assert.match(source, /htmlFor="filter-date-to"/);
-  assert.match(source, /htmlFor="filter-min-amount"/);
-  assert.match(source, /htmlFor="filter-max-amount"/);
-  assert.match(source, /Clear filters/);
-  assert.match(source, /totalCount/);
-  assert.match(source, /fetchFilteredExpenses/);
-  assert.match(source, /localDateRange/);
 });
 
 test("validateExpenseForm reports each client-side validation boundary", () => {
@@ -170,7 +97,7 @@ test("saveExpense posts the request and handles success and API errors", async (
 
   await saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, successfulFetch);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].input, "/api/expenses");
+  assert.equal(calls[0].input, "/api/v1/expenses");
   assert.equal(calls[0].init?.method, "POST");
   assert.deepEqual(calls[0].init?.headers, { "content-type": "application/json" });
   assert.deepEqual(JSON.parse(calls[0].init?.body as string), {
@@ -191,4 +118,61 @@ test("saveExpense posts the request and handles success and API errors", async (
     saveExpense({ amountCents: 1500, description: "Coffee", category: "Food", date: "2026-02-14T08:30:00.000Z" }, malformedErrorFetch),
     { message: "We couldn't save this expense. Please try again." },
   );
+});
+
+test("updateExpense patches the selected expense and handles API errors", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const successfulFetch: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ expense: { id: 7 } }), { status: 200 });
+  };
+  const expense = { amountCents: 2500, description: "Dinner", category: "Food" as const, date: "2026-02-14T12:30:00.000Z" };
+
+  await updateExpense(7, expense, successfulFetch);
+  assert.equal(calls[0].input, "/api/v1/expenses/7");
+  assert.equal(calls[0].init?.method, "PATCH");
+  assert.deepEqual(JSON.parse(calls[0].init?.body as string), expense);
+
+  const failingFetch: typeof fetch = async () => new Response(JSON.stringify({ error: "Expense not found." }), { status: 404 });
+  await assert.rejects(updateExpense(7, expense, failingFetch), { message: "Expense not found." });
+});
+
+test("deleteExpense removes the selected expense and handles API errors", async () => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const successfulFetch: typeof fetch = async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ deleted: true }), { status: 200 });
+  };
+  await deleteExpense(7, successfulFetch);
+  assert.equal(calls[0].input, "/api/v1/expenses/7");
+  assert.equal(calls[0].init?.method, "DELETE");
+
+  const failingFetch: typeof fetch = async () => new Response(JSON.stringify({ error: "Expense not found." }), { status: 404 });
+  await assert.rejects(deleteExpense(7, failingFetch), { message: "Expense not found." });
+});
+
+test("the tracker exposes edit actions and an explicit edit mode", () => {
+  const source = readFileSync(new URL("../app/activity-tracker.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /startEditing\(expense\)/);
+  assert.match(source, /Edit expense/);
+  assert.match(source, /Save changes/);
+  assert.match(source, /Cancel editing/);
+  assert.match(source, /aria-label=\{`Delete \$\{expense\.description\}`\}/);
+  assert.match(source, /window\.confirm/);
+  assert.match(source, /onClick=\{startAdding\}/);
+});
+
+test("the web client uses the same REST v1 expense, proof, and budget contracts", () => {
+  const tracker = readFileSync(new URL("../app/activity-tracker.tsx", import.meta.url), "utf8");
+  const proofs = readFileSync(new URL("../app/proof-controls.tsx", import.meta.url), "utf8");
+  const budget = readFileSync(new URL("../app/integrations/budget-manager.tsx", import.meta.url), "utf8");
+  const categories = readFileSync(new URL("../app/integrations/category-manager.tsx", import.meta.url), "utf8");
+  assert.match(tracker, /fetch\("\/api\/v1\/expenses"\)/);
+  assert.match(tracker, /fetch\("\/api\/v1\/categories"\)/);
+  assert.match(tracker, /\/api\/v1\/reports\/pdf/);
+  assert.match(proofs, /\/api\/v1\/expenses\/\$\{expenseId\}\/proofs/);
+  assert.match(budget, /fetch\("\/api\/v1\/budget"/);
+  assert.match(categories, /fetch\("\/api\/v1\/categories"\)/);
+  assert.doesNotMatch(tracker, /\/api\/reports\/pdf/);
 });

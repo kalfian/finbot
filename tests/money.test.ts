@@ -18,8 +18,9 @@ test("toAmountCents rejects invalid money inputs", () => {
 });
 
 test("formatCurrency formats cents as Indonesian Rupiah", () => {
-  assert.equal(formatCurrency(0), "Rp\u00a00,00");
+  assert.equal(formatCurrency(0), "Rp\u00a00");
   assert.equal(formatCurrency(123), "Rp\u00a01,23");
+  assert.equal(formatCurrency(123400), "Rp\u00a01.234");
   assert.equal(formatCurrency(123456), "Rp\u00a01.234,56");
   assert.doesNotMatch(formatCurrency(123), /\$/);
 });

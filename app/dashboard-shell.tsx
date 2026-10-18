@@ -15,10 +15,10 @@ function applyTheme(theme: Theme) {
 }
 export default function DashboardShell({
   children,
-  csrfToken,
+  user,
 }: {
   children: ReactNode;
-  csrfToken: string;
+  user: { username: string; role: "admin" | "user" };
 }) {
   const [settings, setSettings] = useState(false);
   const [current, setCurrent] = useState("");
@@ -30,7 +30,10 @@ export default function DashboardShell({
   useEffect(() => {
     const preferred =
       document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-    const frame = requestAnimationFrame(() => setTheme(preferred));
+    const frame = requestAnimationFrame(() => {
+      setTheme(preferred);
+      update();
+    });
     const update = () =>
       setSection(
         location.hash === "#transactions" ? "transactions" : "overview",
@@ -71,9 +74,9 @@ export default function DashboardShell({
     setNotice("");
     try {
       const response = await apiFetch("/api/auth/password", {
-        method: "POST",
+        method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ current, next }),
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
       });
       if (!response.ok) throw Error();
       location.reload();
@@ -86,7 +89,6 @@ export default function DashboardShell({
   }
   return (
     <>
-      <meta name="csrf-token" content={csrfToken} />
       <a className="skip-link" href="#overview">
         Skip to dashboard
       </a>
@@ -113,6 +115,20 @@ export default function DashboardShell({
             <Icon name="list" />
             Transactions
           </a>
+          <a href="/activity">
+            <Icon name="list" />
+            Calendar &amp; reports
+          </a>
+          <a href="/integrations">
+            <Icon name="account" />
+            Integrations
+          </a>
+          {user.role === "admin" && (
+            <a href="/users">
+              <Icon name="account" />
+              Users
+            </a>
+          )}
         </nav>
         <div className="rail-note">
           <span className="note-line" />
@@ -152,7 +168,9 @@ export default function DashboardShell({
         id="account"
         busy={busy}
       >
-        <p className="muted">Manage the password for your personal ledger.</p>
+        <p className="muted">
+          Signed in as {user.username}. Manage your account password.
+        </p>
         <form onSubmit={change} className="account-form">
           <label>
             Current password
@@ -175,9 +193,7 @@ export default function DashboardShell({
               onChange={(event) => setNext(event.target.value)}
               required
             />
-            <small>
-              At least 8 characters. You will sign in again after updating.
-            </small>
+            <small>8-128 characters, including a letter and a number.</small>
           </label>
           {notice && (
             <p className="form-message error" role="alert">

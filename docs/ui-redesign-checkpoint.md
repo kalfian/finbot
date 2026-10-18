@@ -4,7 +4,7 @@
 - Request: total UI/UX redesign, plan first, execute in phases with persisted checkpoints. Existing permission to work directly on master continues.
 - Worktree: `/home/kalfian/developments/finbot`, master at `892316a`, behind origin/master by 11 commits. Substantial existing edits are intentional; do not reset, pull, or overwrite them.
 - Baseline: previous pass had 64 unit tests, lint, types, build, and auth browser smoke passing. Source-only copies before this redesign: `/tmp/finbot-redesign-baseline` (not a durable Git revision).
-- Current phase: all four phases complete; ready for user visual review. No commit or deployment authorized.
+- Current phase: remote integration verified; user authorized merge commit and push to master. Deployment is outside this task.
 
 ## Design and scope
 - Direction: modern personal ledger; cobalt ink, warm paper, expressive editorial headings, locally served fonts, considered light/dark palettes.
@@ -61,3 +61,27 @@
 - Kalfian subsequently authorized commit and push. Local snapshot commit includes the existing auth/backend foundations required by the tested redesign.
 - Fresh fetch confirms origin/master at e69af93, eleven commits ahead of the local base. Those commits add multi-user ownership, REST v1, proofs and MCP; local single-account auth/API implementation is incompatible.
 - Do not overwrite remote history or merge by choosing one side wholesale. Awaiting user's choice between adapting this redesign to current remote master and publishing the verified local snapshot to a separate review branch.
+
+## Remote integration phase 1 (2026-10-18)
+- User selected integration with latest master, then tests and push. Merge parent origin/master e69af93; local design snapshot 7930211.
+- Backend/auth/database and original tests use upstream multi-user contracts. Removed incompatible single-account and unscoped auxiliary routes. Dashboard now reads REST v1 and derives filtered overview data from the authenticated snapshot.
+- Upstream calendar, receipt upload/retry and PDF workflows retained at /activity; integrations/account/user management remain guarded by requirePageUser. Main dashboard adds proof controls and links to those workflows.
+- In progress: reconcile tests and documentation, verify isolation, screenshots and build. Do not publish until all gates pass.
+
+## Remote integration phase 2 (2026-10-18)
+- Main dashboard uses the user's categories and authenticated v1 expense snapshot; local date/amount/category filters, pagination and summaries are covered by new pure-function tests.
+- Receipt controls are on transaction rows; proof-bearing deletion cannot offer a misleading Undo. Source mappings are never claimed to be restored.
+- Login keeps the redesigned appearance with upstream username/password and forced password rotation. Password and logout requests now match upstream PUT/303 behavior.
+- Upstream backend and route implementations compare byte-for-byte equal to origin/master. Calendar/PDF/receipt-entry retained in /activity, with scoped styles; theme preference shared across pages.
+- Documentation reconciled to multi-user v1 contracts. Added Playwright as a dev dependency for reproducible browser checks. Latest unit suite: 67 passed. Final expanded browser, build, production screenshots and HTTP/MCP verification in progress.
+
+## Remote integration phase 3 - acceptance (2026-10-18)
+- All checks exit 0: npm test (67/67), npm run lint, tests/auth.e2e.mjs with provisioned Chromium, npm run build, npx tsc --noEmit, git diff --check, documentation link check.
+- Browser tests additionally verify forced initial password change, new password/logout contracts, responsive secondary pages, calendar/PDF download and a second user's empty dashboard/private categories/denied cross-user delete. Dashboard widths: 320/390/768/1024/1440, plus light/dark checks.
+- Production HTTP integration-smoke passed on a fresh disposable database: 42 synthetic records, a valid PDF (16213 bytes), JWT and generated token authentication/revocation, MCP request/response, category management and cross-user isolation.
+- Production screenshots refreshed after integration and visually inspected: dashboard desktop/mobile, themes, composer, plus preserved activity/integrations pages. No real records or credentials captured.
+- Evidence logs: /tmp/finbot-integration-{tests,lint,browser,build,types,http,screenshots}.log. These are temporary local logs, not tracked artifacts.
+- Final backend boundary: all app/api routes and lib/auth.ts, lib/database.ts, lib/expenses.ts, lib/expense-api.ts, lib/expense-form.ts match origin/master e69af93. All remote financial/auth contracts retained. No deployment/database mutation on a live service.
+- Limits: browser coverage is Chromium; no Safari/Firefox or screen-reader audit. Dashboard reads a complete per-user expense snapshot, following the current v1 API; very large ledgers may need server pagination later. Calendar/account/integrations keep their established layouts behind scoped styles.
+- Publication: merge commit will include parents 7930211 and e69af93 and will be pushed normally to origin/master, preserving remote history. Exact published revision is reported in the session and Punk Records.
+- Lesson candidate: before UI integration, verify the live remote contract; snapshot-local tests alone do not establish compatibility with a divergent multi-user backend. Retain upstream auth/ownership implementation and exercise two users over HTTP and browser before publishing.

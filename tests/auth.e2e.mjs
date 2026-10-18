@@ -12,10 +12,9 @@ const directory = mkdtempSync(join(tmpdir(), "financial-tracker-e2e-"));
 const environment = {
   ...process.env,
   DATABASE_PATH: join(directory, "ledger.db"),
-  FINANCIAL_TRACKER_SESSION_SECRET: randomBytes(48).toString("base64url"),
 };
-const password = randomBytes(24).toString("base64url");
-const changedPassword = randomBytes(24).toString("base64url");
+const password = "Aa1" + randomBytes(24).toString("base64url");
+const changedPassword = "Bb2" + randomBytes(24).toString("base64url");
 const server = spawn("npm", ["run", "dev", "--", "--port", String(port)], {
   cwd: process.cwd(),
   detached: true,
@@ -90,11 +89,17 @@ async function requestApi(page, path, method, expectedStatus) {
   );
 }
 
-async function submitAndWaitForApi(page, button, path, expectedStatus) {
+async function submitAndWaitForApi(
+  page,
+  button,
+  path,
+  expectedStatus,
+  method = "POST",
+) {
   const response = page.waitForResponse((candidate) => {
     const request = candidate.request();
     return (
-      new URL(candidate.url()).pathname === path && request.method() === "POST"
+      new URL(candidate.url()).pathname === path && request.method() === method
     );
   });
   await button.click();
@@ -198,31 +203,40 @@ try {
   });
 
   await page.goto(baseURL, { waitUntil: "domcontentloaded" });
-  await waitForHeading(page, "Create your local administrator");
+  await waitForHeading(page, "Sign in to your ledger");
   assert.equal(
     await page
       .getByRole("heading", { name: "Your money, at a glance." })
       .count(),
     0,
-    "The dashboard must not render before login.",
   );
-  await requestApi(page, "/api/expenses", "GET", 401);
-
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByLabel("Confirm password").fill(password);
+  await requestApi(page, "/api/v1/expenses", "GET", 401);
+  await page.getByLabel("Username").fill("admin");
+  await page.getByLabel("Password", { exact: true }).fill("123456");
   await submitAndWaitForApi(
     page,
-    page.getByRole("button", { name: "Create administrator" }),
-    "/api/auth/setup",
+    page.getByRole("button", { name: "Login", exact: true }),
+    "/api/auth/login",
     200,
   );
+  await page.getByText("Password change required", { exact: true }).waitFor();
+  await page.getByLabel("Current password", { exact: true }).fill("123456");
+  await page.getByLabel("New password", { exact: true }).fill(password);
+  await page.getByLabel("Confirm new password").fill(password);
+  await submitAndWaitForApi(
+    page,
+    page.getByRole("button", { name: "Change password", exact: true }),
+    "/api/auth/password",
+    200,
+    "PUT",
+  );
   await waitForHeading(page, "Your money, at a glance.");
-  await requestApi(page, "/api/expenses", "GET", 200);
+  await requestApi(page, "/api/v1/expenses", "GET", 200);
 
   await page.locator(".overview-heading button").click();
   await page.locator("#quick-amount").fill("10000");
   await page.getByLabel("What was it?").fill("Browser quick add");
-  await page.route("**/api/expenses", (route) =>
+  await page.route("**/api/v1/expenses", (route) =>
     route.fulfill({
       status: 503,
       contentType: "application/json",
@@ -234,7 +248,7 @@ try {
     page
       .locator("dialog[open]")
       .getByRole("button", { name: "Add expense", exact: true }),
-    "/api/expenses",
+    "/api/v1/expenses",
     503,
   );
   await page
@@ -253,13 +267,13 @@ try {
       .isEnabled(),
     true,
   );
-  await page.unroute("**/api/expenses");
+  await page.unroute("**/api/v1/expenses");
   await submitAndWaitForApi(
     page,
     page
       .locator("dialog[open]")
       .getByRole("button", { name: "Add expense", exact: true }),
-    "/api/expenses",
+    "/api/v1/expenses",
     201,
   );
   await page
@@ -298,12 +312,11 @@ try {
   await page.keyboard.press("Escape");
 
   const seeded = await page.evaluate(async () => {
-    const token = document.querySelector('meta[name="csrf-token"]').content;
     const statuses = [];
     for (let index = 0; index < 9; index += 1) {
-      const response = await fetch("/api/expenses", {
+      const response = await fetch("/api/v1/expenses", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-csrf-token": token },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           description: `Synthetic item ${index}`,
           amountCents: 125000,
@@ -358,19 +371,19 @@ try {
     () => document.querySelectorAll(".ledger-row").length === 8,
   );
   let slowFinished = false;
-  await page.route("**/api/expenses?**", async (route) => {
-    if (
-      new URL(route.request().url()).searchParams.get("search") ===
-      "slow-missing"
-    ) {
+  let delayNext = true;
+  await page.route("**/api/v1/expenses", async (route) => {
+    if (route.request().method() === "GET" && delayNext) {
+      delayNext = false;
       const response = await route.fetch();
       await delay(350);
       await route.fulfill({ response });
       slowFinished = true;
     } else await route.continue();
   });
-  const slowStarted = page.waitForRequest((request) =>
-    request.url().includes("search=slow-missing"),
+  const slowStarted = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/v1/expenses") && request.method() === "GET",
   );
   await page.getByLabel("Search descriptions").fill("slow-missing");
   await slowStarted;
@@ -380,13 +393,13 @@ try {
   );
   for (let attempt = 0; !slowFinished && attempt < 60; attempt += 1)
     await delay(50);
-  assert.ok(slowFinished, "The delayed response did not finish.");
+  assert.ok(slowFinished);
   await delay(50);
   assert.ok(
     (await page.locator(".ledger-row").count()) > 0,
-    "A stale search response replaced the latest results.",
+    "Stale response replaced current filter results.",
   );
-  await page.unroute("**/api/expenses?**");
+  await page.unroute("**/api/v1/expenses");
   await page.getByLabel("Search descriptions").fill("");
   await page.emulateMedia({ reducedMotion: "reduce" });
   assert.equal(
@@ -397,7 +410,8 @@ try {
   );
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
-  for (const width of [1440, 768, 390, 320]) await assertLayout(page, width);
+  for (const width of [1440, 1024, 768, 390, 320])
+    await assertLayout(page, width);
   await page.locator(".theme-toggle").click();
   for (const width of [1440, 390, 320]) await assertLayout(page, width);
 
@@ -410,15 +424,7 @@ try {
     page.getByRole("button", { name: "Update password" }),
     "/api/auth/password",
     200,
-  );
-  await waitForHeading(page, "Sign in to your ledger");
-
-  await page.getByLabel("Password").fill(changedPassword);
-  await submitAndWaitForApi(
-    page,
-    page.getByRole("button", { name: "Sign in" }),
-    "/api/auth/login",
-    200,
+    "PUT",
   );
   await waitForHeading(page, "Your money, at a glance.");
 
@@ -427,7 +433,7 @@ try {
     page,
     page.getByRole("button", { name: "Log out" }),
     "/api/auth/logout",
-    200,
+    303,
   );
   await waitForHeading(page, "Sign in to your ledger");
   assert.equal(
@@ -437,16 +443,101 @@ try {
     0,
     "The dashboard must not render after logout.",
   );
-  await requestApi(page, "/api/expenses", "GET", 401);
+  await requestApi(page, "/api/v1/expenses", "GET", 401);
 
-  await page.getByLabel("Password").fill(changedPassword);
+  await page.getByLabel("Username").fill("admin");
+  await page.getByLabel("Password", { exact: true }).fill(changedPassword);
   await submitAndWaitForApi(
     page,
-    page.getByRole("button", { name: "Sign in" }),
+    page.getByRole("button", { name: "Login", exact: true }),
     "/api/auth/login",
     200,
   );
   await waitForHeading(page, "Your money, at a glance.");
+
+  // Exercise the preserved workflows from the redesigned navigation.
+  await page.getByRole("link", { name: "Calendar & reports" }).click();
+  await page.getByRole("tab", { name: "Calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Next month" }).click();
+  await page.getByRole("button", { name: "Previous month" }).click();
+  const pdfDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download PDF" }).click();
+  const pdf = await pdfDownload;
+  await pdf.saveAs(join(directory, "report.pdf"));
+  assert.equal(
+    readFileSync(join(directory, "report.pdf")).subarray(0, 5).toString(),
+    "%PDF-",
+  );
+  for (const path of ["/activity", "/integrations", "/users", "/account"]) {
+    await page.goto(baseURL + path);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await assertNoHorizontalOverflow(page);
+  }
+  await page.goto(baseURL);
+  const adminRecords = await (
+    await page.request.get(baseURL + "/api/v1/expenses")
+  ).json();
+  const secondPassword = "Cc3" + randomBytes(20).toString("base64url");
+  assert.equal(
+    (
+      await page.request.post(baseURL + "/api/users", {
+        data: { username: "second-user", password: secondPassword },
+      })
+    ).status(),
+    201,
+  );
+  const second = await browser.newContext();
+  try {
+    assert.equal(
+      (
+        await second.request.post(baseURL + "/api/auth/login", {
+          data: { username: "second-user", password: secondPassword },
+        })
+      ).status(),
+      200,
+    );
+    assert.equal(
+      (
+        await second.request.put(baseURL + "/api/auth/password", {
+          data: {
+            currentPassword: secondPassword,
+            newPassword: secondPassword + "D4",
+          },
+        })
+      ).status(),
+      200,
+    );
+    const otherPage = await second.newPage();
+    await otherPage.goto(baseURL);
+    await waitForHeading(otherPage, "Your money, at a glance.");
+    await otherPage
+      .getByText("Start with the little things.", { exact: true })
+      .waitFor();
+    assert.equal(
+      await otherPage.getByRole("link", { name: "Users", exact: true }).count(),
+      0,
+    );
+    const otherRecords = await (
+      await second.request.get(baseURL + "/api/v1/expenses")
+    ).json();
+    assert.deepEqual(otherRecords.expenses, []);
+    const otherCategories = await (
+      await second.request.get(baseURL + "/api/v1/categories")
+    ).json();
+    assert.ok(
+      !otherCategories.categories.some((item) => item.name === "Books"),
+    );
+    assert.equal(
+      (
+        await second.request.delete(
+          baseURL + "/api/v1/expenses/" + adminRecords.expenses[0].id,
+        )
+      ).status(),
+      404,
+    );
+  } finally {
+    await second.close();
+  }
 
   assert.equal(
     expectedServiceErrors.length,
@@ -464,22 +555,22 @@ try {
     apiRequests.some(
       (request) =>
         request.method === "POST" &&
-        request.path === "/api/expenses" &&
+        request.path === "/api/v1/expenses" &&
         request.status === 201,
     ),
-    "Quick Add POST /api/expenses was not captured as a successful request.",
+    "Quick Add POST /api/v1/expenses was not captured as a successful request.",
   );
   assert.ok(
     apiRequests.filter(
       (request) =>
         request.method === "GET" &&
-        request.path === "/api/expenses" &&
+        request.path === "/api/v1/expenses" &&
         request.status === 401,
     ).length >= 2,
     "Unauthenticated API requests were not captured before login and after logout.",
   );
   assert.ok(
-    urls.length >= 5 && urls.every((path) => path === "/"),
+    urls.includes("/login") && urls.includes("/account") && urls.includes("/"),
     "The expected auth lifecycle URL changes were not captured.",
   );
   process.stdout.write("Auth browser E2E passed.\n");

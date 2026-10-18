@@ -1,10 +1,33 @@
+import { requireApiAuth } from "@/lib/api-auth";
+import { createSessionRepository, createUserRepository, sessionCookie } from "@/lib/auth";
 import { getDatabase } from "@/lib/db";
-import { changePassword, SESSION_COOKIE } from "@/lib/auth";
-import { requestIsSecure, requireApi } from "@/lib/auth-guard";
-export async function POST(request: Request): Promise<Response> {
-  const denied = await requireApi(request, true); if (denied) return denied;
-  const body = await request.json().catch(() => null) as { current?: unknown; next?: unknown } | null;
-  const updated = changePassword(getDatabase(), body?.current, body?.next);
-  if (!updated) return Response.json({ error: "Unable to update password." }, { status: 400 });
-  const response = Response.json({ ok: true }); response.headers.append("set-cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${requestIsSecure(request) ? "; Secure" : ""}`); return response;
+
+export const runtime = "nodejs";
+
+export async function PUT(request: Request): Promise<Response> {
+  const database = getDatabase();
+  const auth = requireApiAuth(request, database, { write: true, allowPasswordChange: true });
+  if ("response" in auth) return auth.response;
+  if (auth.credential === "generated") {
+    return Response.json({ error: "Password changes require a login JWT." }, { status: 403 });
+  }
+  let body: unknown;
+  try { body = await request.json(); } catch { return Response.json({ error: "Valid JSON is required." }, { status: 400 }); }
+  const currentPassword = body && typeof body === "object" && "currentPassword" in body ? body.currentPassword : null;
+  const newPassword = body && typeof body === "object" && "newPassword" in body ? body.newPassword : null;
+  if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+    return Response.json({ error: "Current and new passwords are required." }, { status: 400 });
+  }
+  try {
+    const user = createUserRepository(database).changePassword(auth.user.id, currentPassword, newPassword);
+    const sessions = createSessionRepository(database);
+    sessions.revokeUser(user.id);
+    const session = sessions.create(user.id);
+    return Response.json({ user, accessToken: session.token, tokenType: "Bearer", expiresAt: session.expiresAt.toISOString() }, { headers: {
+      "Cache-Control": "no-store",
+      "Set-Cookie": sessionCookie(session.token, session.expiresAt, new URL(request.url).protocol === "https:"),
+    } });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Password could not be changed." }, { status: 400 });
+  }
 }

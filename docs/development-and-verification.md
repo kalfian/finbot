@@ -19,9 +19,9 @@ The Next.js configuration explicitly externalizes the native SQLite package for 
 
 ## Automated test coverage
 
-`npm test` exercises money and form conversion, periods, expense validation/repository/API behavior, budget rules, recurring-plan behavior, CSV portability and rule ordering, calendar utilities, and authentication helpers. The test suite uses isolated in-memory SQLite databases where appropriate.
+`npm test` exercises money and form conversion, periods, expense validation/repository/API behavior, dashboard summaries/filters, calendar utilities, authentication, user isolation, category management, proofs, PDF, budgets, API tokens, migrations and MCP contracts. The test suite uses isolated in-memory SQLite databases where appropriate.
 
-`tests/auth.e2e.mjs` is a separate browser smoke test for administrator setup, sign-in/out, password changes, CRUD/undo, failed-save recovery, custom categories, export, filters, stale responses, pagination, keyboard dialogs, reduced motion, and viewport overflow. It creates an isolated temporary database and generated runtime-only session material, then starts the development server. It is not part of the `npm test` glob and relies on a locally available Playwright installation/browser; install or provision that tooling outside this repository's manifest before running it.
+`tests/auth.e2e.mjs` is a separate browser smoke test for administrator setup, sign-in/out, password changes, CRUD/undo, failed-save recovery, custom categories, export, filters, stale responses, pagination, keyboard dialogs, reduced motion, and viewport overflow. It creates an isolated temporary database and generated runtime-only session material, then starts the development server. It is not part of the `npm test` glob and relies on a locally available Playwright installation/browser; Playwright is a development dependency; provision Chromium with npx playwright install chromium or set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH.
 
 `tests/hydration-acceptance.mjs` is also an ad hoc browser script, not part of the package test command. It targets a pre-running base URL and a Chromium executable. Its selectors predate the current password-gated dashboard and should be updated before it is treated as a required acceptance check.
 
@@ -34,7 +34,7 @@ The Next.js configuration explicitly externalizes the native SQLite package for 
 5. Check the actual monthly category breakdown, empty states, failed-save feedback, and Account settings.
 6. Resize from desktop to phone width, use navigation, keyboard focus, Escape dismissal, and a reduced-motion preference.
 
-Budget, recurring-plan, and portability behavior is covered by API/repository tests; those features are not exposed by the current dashboard.
+Run tests/integration-smoke.mjs against a separate fresh disposable server with TEST_BASE_URL and TEST_PDF_PATH to exercise JWT/generated tokens, multiple users, PDF and MCP over HTTP. It changes the bootstrap password and creates synthetic records; never target production.
 
 ## Documentation maintenance
 
