@@ -1,86 +1,107 @@
-# Ledger
+# Finbot
 
-Ledger is a minimal, local-first expense tracker. It provides a small Next.js web interface and a JSON API backed by a local SQLite database.
+A personal expense tracker with a focused interface called **Ledger**. Record everyday spending in IDR, review totals, and find transactions without navigating a complex dashboard. Built with Next.js 16, React 19, TypeScript, and SQLite.
 
-The MVP records expenses only: amount, description, and date. It does not require an account, credentials, or an external service.
+## Screenshots
 
-## Requirements
+Screenshots use synthetic transactions in an isolated database, captured from the production build. Both color themes are supported.
 
-- Node.js 20.9 or newer
-- npm
+### Desktop · light
 
-## Local setup
+![Ledger desktop: monthly spending, category breakdown, and transaction history](docs/images/ledger-desktop-light.png)
+
+### Desktop · dark
+
+![Ledger desktop in dark mode](docs/images/ledger-desktop-dark.png)
+
+### Mobile
+
+<img src="docs/images/ledger-mobile.png" alt="Ledger mobile: spending overview, categories, and transaction history" width="390">
+
+### Focused expense composer
+
+![Ledger expense composer with amount, description, category, and date controls](docs/images/ledger-composer.png)
+
+## What you can do
+
+- Add, edit, delete, and undo deleted expenses with amount, description, category, and date/time.
+- Check today's spending, this month's spending, the monthly transaction count, and actual spending by category.
+- Choose a built-in category or create your own; use Now/Yesterday date shortcuts.
+- Search descriptions and filter by category, dates, or amount. Browse results eight at a time.
+- Download all matching expenses as a standalone HTML document.
+- Switch between light and dark themes; the preference is saved in your browser.
+- Protect the dashboard with one local administrator account; change your password or log out from Account.
+
+Desktop uses a navigation rail, a monthly spending overview, and a searchable transaction list. Add/edit opens a focused dialog. Phone layouts stack the overview and category breakdown, with compact navigation and wrapping category controls. Typography is self-hosted Manrope and DM Serif Display. See [product and dashboard](docs/product-and-dashboard.md) for behavior and accessibility limits.
+
+## Get started
+
+Requires **Node.js 20.9+** and npm. `better-sqlite3` is a native dependency; installation may need a compiler toolchain if no prebuilt binary is available for your environment.
 
 ```bash
 npm install
-cp .env.example .env.local # optional; the default database path works without it
-npm run db:init
-npm run dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000). To expose the development server on the network, use `HOST=0.0.0.0 npm run dev`.
+Generate the local session secret directly into `.env.local`:
 
-To run the production build locally:
+```bash
+node -e 'const fs = require("node:fs"); const secret = require("node:crypto").randomBytes(48).toString("base64url"); fs.writeFileSync(".env.local", fs.readFileSync(".env.local", "utf8").replace(/^FINANCIAL_TRACKER_SESSION_SECRET=.*$/m, "FINANCIAL_TRACKER_SESSION_SECRET=" + secret));'
+npm run dev -- --hostname 127.0.0.1
+```
+
+Open [localhost:3000](http://localhost:3000) and create your administrator account. The password must have at least eight characters. The app initializes its database on first access.
+
+Keep `.env.local` private and retain the secret across restarts. Regenerating it signs existing sessions out. If it is missing or too short, the app displays a configuration screen. See [authentication and security](docs/auth-and-security.md).
+
+### Database
+
+`DATABASE_PATH` defaults to `./data/financial-tracker.db`. Set it in `.env.local` to use another path. The database contains transactions and account/session records; it is excluded from Git.
+
+To initialize it explicitly with your configured path:
+
+```bash
+node --env-file=.env.local --import tsx scripts/init-db.ts
+```
+
+### Production build
 
 ```bash
 npm run build
-npm start
+npm start -- --hostname 127.0.0.1
 ```
 
-To run the complete test suite:
+Use an intentionally configured reverse proxy and HTTPS when exposing the application beyond localhost. The app is designed for one local account; it has no password-reset email flow or automatic backups.
+
+## Development and checks
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Next.js development server |
+| `npm test` | Unit, repository, API, and authentication tests |
+| `npm run lint` | ESLint |
+| `npx tsc --noEmit` | Type checking |
+| `npm run build` | Production build and Next.js type checking |
+| `npm run db:init` | Initialize SQLite using the shell's environment or default path |
+
+The optional browser smoke test needs a separately provisioned `@playwright/test` and Chromium installation:
 
 ```bash
-npm test
+node tests/auth.e2e.mjs
+# Or point to an existing Chromium binary:
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chrome node tests/auth.e2e.mjs
 ```
 
-## Commands
+It starts a temporary server with an isolated database and checks authentication, CRUD/undo, failed-save recovery, custom categories, export, filters, stale-response handling, pagination, dialog keyboard behavior, themes, and layout clipping at 320, 390, 768, and 1440 px. See [development and verification](docs/development-and-verification.md).
 
-- `npm run dev` — run the development server
-- `npm run lint` — check the source with ESLint
-- `npm run build` — create the production build
-- `npm run db:init` — create the local SQLite file and initialize its schema
-- `npm test` — run repository and API tests against isolated in-memory databases
+## API and project structure
 
-## SQLite choice
+Expense APIs require an authenticated browser session. Mutations also require the same-origin and CSRF protections used by the app. Amounts are integer minor units: `1250000` represents **Rp12,500.00**. Dates are validated date/time values; the interface converts local input to ISO timestamps.
 
-The project uses [better-sqlite3](https://github.com/WiseLibs/better-sqlite3), a synchronous native SQLite driver suited to a small local app that needs neither credentials nor an external service. `lib/database.ts` contains the shared SQLite implementation used by CLI initialization and opens `DATABASE_PATH`, defaulting to `./data/financial-tracker.db`. `lib/db.ts` is the Next.js server-only wrapper that re-exports it. Next.js externalizes the native module from server bundling, and database files are ignored by Git.
+- `app/expense-tracker.tsx`: entry form, totals, filters, transaction actions, and pagination.
+- `lib/expense-recorder-design.ts`: shared styles for the dashboard and HTML export.
+- `app/dashboard-shell.tsx`: account settings and theme controls.
+- `lib/database.ts`: SQLite schema and initialization; `lib/db.ts` supplies the server connection.
+- `app/api/`: authenticated route handlers.
 
-`npm run db:init` uses the shared implementation and creates the initial `expenses` table.
-
-## Expense API
-
-`GET /api/expenses` returns expenses sorted by expense date newest first (with newest ID first when dates are equal):
-
-```json
-{
-  "expenses": [
-    {
-      "id": 1,
-      "amountCents": 1999,
-      "description": "Lunch",
-      "date": "2026-02-14",
-      "createdAt": "2026-02-14T12:34:56.789Z"
-    }
-  ]
-}
-```
-
-`POST /api/expenses` accepts this JSON request body and returns `201 Created` with the created record in `{ "expense": ... }`:
-
-```json
-{
-  "amountCents": 1999,
-  "description": "Lunch",
-  "date": "2026-02-14"
-}
-```
-
-Amounts are integer minor currency units (for example, `1999` means 19.99 in a two-decimal currency); they must be positive. `description` must be non-blank and `date` must be a valid `YYYY-MM-DD` date. Invalid or malformed request bodies receive a JSON `{ "error": "..." }` response with status `400`.
-
-## Data model
-
-The `expenses` table stores `id`, `amount_cents`, `description`, `date`, and `created_at`. API responses expose the same values as `id`, `amountCents`, `description`, `date`, and `createdAt`. The database enforces non-null fields and a positive `amount_cents`; `created_at` is generated server-side as an ISO-8601 UTC timestamp.
-
-## Out of scope
-
-This MVP intentionally has no authentication, budgets, income tracking, categories, charts, expense editing or deletion, external services, or deployment configuration.
+See [API documentation](docs/api.md) and [data model](docs/data-model.md) for backend details. The repository also contains budget, recurring-plan, and portability APIs; these are not exposed in the focused expense dashboard.

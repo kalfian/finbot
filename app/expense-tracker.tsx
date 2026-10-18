@@ -1,137 +1,985 @@
 "use client";
-
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { formatCreatedAt, formatExpenseDate } from "@/lib/date-time";
-import { buildCalendarDays, filterExpenses, getLocalDateKey, groupExpensesByLocalDate, shiftLocalMonth, startOfLocalMonth, type CalendarExpense } from "@/lib/expense-calendar";
-import { EXPENSE_CATEGORIES, getBrowserLocalDateTime, saveExpense, validateExpenseForm } from "@/lib/expense-form";
-import { calculateTotal, formatCurrency } from "@/lib/money";
+/* eslint-disable react-hooks/set-state-in-effect */
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { formatExpenseDate } from "@/lib/date-time";
+import { type CalendarExpense } from "@/lib/expense-calendar";
+import {
+  EXPENSE_CATEGORIES,
+  getBrowserLocalDateTime,
+  saveExpense,
+  validateExpenseForm,
+} from "@/lib/expense-form";
+import { createExpenseHtmlExport } from "@/lib/expense-html-export";
+import { formatCurrency, toAmountCents } from "@/lib/money";
+import { periodRange } from "@/lib/periods";
+import { Icon, categoryIcon } from "./components/ui-icon";
+import { Modal } from "./components/modal";
+import type { CategorySummary } from "@/lib/expenses";
+import { apiFetch } from "@/lib/client-fetch";
 
 type Expense = CalendarExpense;
-type FieldName = "amount" | "description" | "category" | "date";
+type ExpenseResult = {
+  expenses: Expense[];
+  totalCount: number;
+  insights?: { categories: CategorySummary[] };
+  summary?: { totalCents: number; transactionCount: number };
+};
+type CategoriesResult = { categories: string[] };
+type Filters = {
+  search: string;
+  category: string;
+  from: string;
+  to: string;
+  minAmount: string;
+  maxAmount: string;
+};
+const PAGE_SIZE = 8;
+const EMPTY_FILTERS: Filters = {
+  search: "",
+  category: "",
+  from: "",
+  to: "",
+  minAmount: "",
+  maxAmount: "",
+};
+const apiMessage = (body: unknown, fallback: string) =>
+  body &&
+  typeof body === "object" &&
+  "error" in body &&
+  typeof body.error === "string"
+    ? body.error
+    : fallback;
+const queryFor = (range: { start: Date; end: Date }, limit: number) =>
+  new URLSearchParams({
+    start: range.start.toISOString(),
+    end: range.end.toISOString(),
+    limit: String(limit),
+  });
+
+function localDateRange(from: string, to: string) {
+  const params = new URLSearchParams();
+  if (from) params.set("start", new Date(`${from}T00:00`).toISOString());
+  if (to) {
+    const end = new Date(`${to}T00:00`);
+    end.setDate(end.getDate() + 1);
+    params.set("end", end.toISOString());
+  }
+  return params;
+}
+
+function amountFilter(value: string) {
+  if (!value) return undefined;
+  if (value === "0") return 0;
+  return toAmountCents(value);
+}
+
+function filterQuery(filters: Filters, limit: number, offset = 0) {
+  const params = localDateRange(filters.from, filters.to);
+  if (filters.search.trim()) params.set("search", filters.search.trim());
+  if (filters.category) params.set("category", filters.category);
+  const min = amountFilter(filters.minAmount);
+  const max = amountFilter(filters.maxAmount);
+  if (min !== undefined && min !== null)
+    params.set("minAmountCents", String(min));
+  if (max !== undefined && max !== null)
+    params.set("maxAmountCents", String(max));
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  return params;
+}
+
+function filterSummary(filters: Filters) {
+  const parts = [
+    filters.search.trim() && `Search: ${filters.search.trim()}`,
+    filters.category && `Category: ${filters.category}`,
+    filters.from && `From: ${filters.from}`,
+    filters.to && `To: ${filters.to}`,
+    filters.minAmount && `Min: Rp${filters.minAmount}`,
+    filters.maxAmount && `Max: Rp${filters.maxAmount}`,
+  ].filter(Boolean);
+  return parts.length ? parts.join("; ") : "No filters active";
+}
 
 export default function ExpenseTracker() {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [formError, setFormError] = useState("");
-  const [invalidField, setInvalidField] = useState<FieldName | null>(null);
-  const [successMessage, setSuccessMessage] = useState("");
+  const [items, setItems] = useState<Expense[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [todayTotal, setTodayTotal] = useState(0);
+  const [monthTotal, setMonthTotal] = useState(0);
+  const [monthCount, setMonthCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [hasSummary, setHasSummary] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Food");
   const [date, setDate] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [calendarMonth, setCalendarMonth] = useState(() => startOfLocalMonth(new Date()));
-  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
-
-  const loadExpenses = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError("");
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [newCategory, setNewCategory] = useState("");
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [editing, setEditing] = useState<Expense>();
+  const [deleting, setDeleting] = useState<Expense>();
+  const [undo, setUndo] = useState<Expense>();
+  const [restoring, setRestoring] = useState(false);
+  const loadSequence = useRef(0);
+  const [page, setPage] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [composer, setComposer] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [monthCategories, setMonthCategories] = useState<CategorySummary[]>([]);
+  const [monthLabel, setMonthLabel] = useState("This month");
+  const categories = [...EXPENSE_CATEGORIES, ...customCategories];
+  const load = useCallback(async () => {
+    const request = ++loadSequence.current;
+    setLoading(true);
+    setError("");
     try {
-      const response = await fetch("/api/expenses");
-      const body: unknown = await response.json();
-      if (!response.ok || !body || typeof body !== "object" || !("expenses" in body) || !Array.isArray(body.expenses)) throw new Error();
-      setExpenses(body.expenses as Expense[]);
-    } catch {
-      setLoadError("We couldn't load your expenses. Please try again.");
+      const [recentResponse, todayResponse, monthResponse] = await Promise.all([
+        apiFetch(
+          `/api/expenses?${filterQuery(filters, PAGE_SIZE, page * PAGE_SIZE)}`,
+        ),
+        apiFetch(`/api/expenses?${queryFor(periodRange("today"), 1)}`),
+        apiFetch(`/api/expenses?${queryFor(periodRange("month"), 1)}`),
+      ]);
+      const [recent, today, month] = (await Promise.all([
+        recentResponse.json(),
+        todayResponse.json(),
+        monthResponse.json(),
+      ])) as [unknown, unknown, unknown];
+      if (request !== loadSequence.current) return;
+      if (
+        !recentResponse.ok ||
+        !recent ||
+        typeof recent !== "object" ||
+        !("expenses" in recent) ||
+        !Array.isArray(recent.expenses)
+      )
+        throw Error(
+          apiMessage(
+            recent,
+            "We couldn't load your expenses. Please try again.",
+          ),
+        );
+      if (!todayResponse.ok || !monthResponse.ok)
+        throw Error("We couldn't load your totals. Please try again.");
+      const recentData = recent as ExpenseResult;
+      if (page > 0 && page * PAGE_SIZE >= recentData.totalCount) {
+        setPage(Math.max(0, Math.ceil(recentData.totalCount / PAGE_SIZE) - 1));
+        return;
+      }
+      const todayData = today as ExpenseResult;
+      const monthData = month as ExpenseResult;
+      setItems(recentData.expenses);
+      setTotalCount(recentData.totalCount);
+      setTodayTotal(todayData.summary?.totalCents ?? 0);
+      setMonthTotal(monthData.summary?.totalCents ?? 0);
+      setMonthCount(
+        monthData.summary?.transactionCount ?? monthData.totalCount ?? 0,
+      );
+      setMonthCategories(monthData.insights?.categories ?? []);
+      setHasSummary(true);
+    } catch (caught) {
+      if (request === loadSequence.current)
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "We couldn't load your expenses. Please try again.",
+        );
     } finally {
-      setIsLoading(false);
+      if (request === loadSequence.current) setLoading(false);
     }
-  }, []);
-
+  }, [filters, page]);
   useEffect(() => {
-    void Promise.resolve().then(loadExpenses);
-  }, [loadExpenses]);
-
+    void load();
+    return () => {
+      loadSequence.current += 1;
+    };
+  }, [load]);
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setDate(getBrowserLocalDateTime()));
-    return () => window.cancelAnimationFrame(frame);
+    void (async () => {
+      try {
+        const response = await apiFetch("/api/categories");
+        const body: unknown = await response.json();
+        if (
+          !response.ok ||
+          !body ||
+          typeof body !== "object" ||
+          !("categories" in body) ||
+          !Array.isArray(body.categories) ||
+          !body.categories.every((category) => typeof category === "string")
+        )
+          throw Error("We couldn't load categories.");
+        setCustomCategories((body as CategoriesResult).categories);
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "We couldn't load categories.",
+        );
+      }
+    })();
   }, []);
-
-  const total = useMemo(() => calculateTotal(expenses.map((expense) => expense.amountCents)), [expenses]);
-  const filteredExpenses = useMemo(() => filterExpenses(expenses, searchQuery), [expenses, searchQuery]);
-  const expensesByDay = useMemo(() => groupExpensesByLocalDate(expenses), [expenses]);
-  const calendarDays = useMemo(() => buildCalendarDays(calendarMonth), [calendarMonth]);
-  const selectedDayExpenses = selectedDayKey ? expensesByDay.get(selectedDayKey) ?? [] : [];
-  const monthLabel = useMemo(() => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(calendarMonth), [calendarMonth]);
-
-  function clearFieldError(field: FieldName) {
-    if (invalidField === field) {
-      setInvalidField(null);
-      setFormError("");
-    }
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
-    setInvalidField(null);
-    setSuccessMessage("");
-    const validation = validateExpenseForm({ amount, description, category, date });
-    if ("error" in validation) {
-      setFormError(validation.error);
-      setInvalidField(validation.error.startsWith("Enter an amount") ? "amount" : validation.error.startsWith("Enter a description") ? "description" : validation.error.startsWith("Choose a category") ? "category" : "date");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await saveExpense(validation.value);
-      setAmount(""); setDescription(""); setCategory("Food"); setDate(getBrowserLocalDateTime()); setSuccessMessage("Expense added.");
-      await loadExpenses();
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : "We couldn't save this expense. Please try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  function handleReset() {
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setDate(getBrowserLocalDateTime());
+      setMonthLabel(
+        new Intl.DateTimeFormat("en", {
+          month: "long",
+          year: "numeric",
+        }).format(new Date()),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  function resetForm() {
     setAmount("");
     setDescription("");
     setCategory("Food");
     setDate(getBrowserLocalDateTime());
-    setFormError("");
-    setInvalidField(null);
-    setSuccessMessage("");
+    setEditing(undefined);
   }
-
-  return <main>
-    <header className="tracker-intro"><h1>Expense tracker</h1><p>Add an expense and see your current total.</p></header>
-    <section className="tracker-grid" aria-label="Expense tracker">
-      <section className="entry-panel" aria-labelledby="add-expense-heading">
-        <h2 id="add-expense-heading">Add an expense</h2>
-        <form onSubmit={handleSubmit} onReset={handleReset} noValidate>
-          <div className="field"><label htmlFor="amount">Amount (IDR)</label><div className="amount-input"><span aria-hidden="true">Rp</span><input id="amount" name="amount" type="text" inputMode="decimal" placeholder="0.00" value={amount} onChange={(event) => { setAmount(event.target.value); clearFieldError("amount"); }} aria-describedby={invalidField === "amount" ? "amount-hint form-error" : "amount-hint"} aria-invalid={invalidField === "amount"} required /></div><p className="hint" id="amount-hint">Enter Indonesian Rupiah, including up to two decimal places.</p></div>
-          <div className="field"><label htmlFor="description">Description</label><input id="description" name="description" type="text" placeholder="e.g. Groceries" value={description} onChange={(event) => { setDescription(event.target.value); clearFieldError("description"); }} aria-describedby={invalidField === "description" ? "form-error" : undefined} aria-invalid={invalidField === "description"} required /></div>
-          <div className="field"><label htmlFor="category">Category</label><select id="category" name="category" value={category} onChange={(event) => { setCategory(event.target.value); clearFieldError("category"); }} aria-describedby={invalidField === "category" ? "form-error" : undefined} aria-invalid={invalidField === "category"} required>{EXPENSE_CATEGORIES.map((expenseCategory) => <option key={expenseCategory} value={expenseCategory}>{expenseCategory}</option>)}</select></div>
-          <div className="field"><label htmlFor="date">Date and time</label><input id="date" name="date" type="datetime-local" step="60" value={date} onChange={(event) => { setDate(event.target.value); clearFieldError("date"); }} aria-describedby={invalidField === "date" ? "date-hint form-error" : "date-hint"} aria-invalid={invalidField === "date"} required /><p className="hint" id="date-hint">Your local time is saved as UTC and displayed in your timezone.</p></div>
-          {formError && <p className="form-message error" id="form-error" role="alert">{formError}</p>}
-          {successMessage && <p className="form-message success" role="status">{successMessage}</p>}
-          <div className="form-actions"><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Adding expense…" : "Add expense"}</button><button className="secondary-button" type="reset" disabled={isSubmitting}>Clear form</button></div>
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (saving) return;
+    setError("");
+    setNotice("");
+    const valid = validateExpenseForm(
+      { amount, description, category, date },
+      categories,
+    );
+    if ("error" in valid) {
+      setError(valid.error);
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editing) {
+        const response = await apiFetch("/api/expenses", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: editing.id, ...valid.value }),
+        });
+        const body: unknown = await response.json();
+        if (!response.ok)
+          throw Error(apiMessage(body, "We couldn't update this expense."));
+        setNotice("Expense updated.");
+      } else {
+        await saveExpense(valid.value, apiFetch);
+        setNotice("Expense added.");
+      }
+      resetForm();
+      setComposer(false);
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "We couldn't save this expense.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function addCategory() {
+    if (addingCategory) return;
+    setAddingCategory(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch("/api/categories", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newCategory }),
+      });
+      const body: unknown = await response.json();
+      if (
+        !response.ok ||
+        !body ||
+        typeof body !== "object" ||
+        !("category" in body) ||
+        typeof body.category !== "string"
+      )
+        throw Error(apiMessage(body, "We couldn't save this category."));
+      const created = body.category;
+      setCustomCategories((values) =>
+        values.includes(created) ? values : [...values, created],
+      );
+      setCategory(created);
+      setNewCategory("");
+      setNotice(`${created} is ready to use.`);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "We couldn't save this category.",
+      );
+    } finally {
+      setAddingCategory(false);
+    }
+  }
+  function edit(expense: Expense) {
+    setEditing(expense);
+    setAmount(String(expense.amountCents / 100));
+    setDescription(expense.description);
+    setCategory(expense.category);
+    setDate(getBrowserLocalDateTime(new Date(expense.date)));
+    setNotice("");
+    setError("");
+    setComposer(true);
+  }
+  async function remove() {
+    if (!deleting || removing) return;
+    const expense = deleting;
+    setRemoving(true);
+    setError("");
+    try {
+      const response = await apiFetch("/api/expenses", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: expense.id }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok)
+        throw Error(apiMessage(body, "We couldn't delete this expense."));
+      setDeleting(undefined);
+      setUndo(expense);
+      setNotice("Expense deleted.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "We couldn't delete this expense.",
+      );
+    } finally {
+      setRemoving(false);
+    }
+  }
+  async function restore() {
+    if (!undo || restoring) return;
+    setRestoring(true);
+    setError("");
+    try {
+      await saveExpense(
+        {
+          amountCents: undo.amountCents,
+          description: undo.description,
+          category: undo.category,
+          date: undo.date,
+        },
+        apiFetch,
+      );
+      setUndo(undefined);
+      setNotice("Expense restored.");
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "We couldn't restore this expense.",
+      );
+    } finally {
+      setRestoring(false);
+    }
+  }
+  function setRelativeDate(daysAgo: number) {
+    const value = new Date();
+    value.setDate(value.getDate() - daysAgo);
+    setDate(getBrowserLocalDateTime(value));
+  }
+  async function fetchFilteredExpenses() {
+    const all: Expense[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const response = await apiFetch(
+        `/api/expenses?${filterQuery(filters, 100, offset)}`,
+      );
+      const body: unknown = await response.json();
+      if (
+        !response.ok ||
+        !body ||
+        typeof body !== "object" ||
+        !("expenses" in body) ||
+        !Array.isArray(body.expenses)
+      )
+        throw Error(
+          apiMessage(body, "We couldn't load all matching expenses."),
+        );
+      all.push(...(body as ExpenseResult).expenses);
+      if (all.length >= (body as ExpenseResult).totalCount) return all;
+    }
+  }
+  async function downloadHtml() {
+    setExporting(true);
+    try {
+      const expenses = await fetchFilteredExpenses();
+      const url = URL.createObjectURL(
+        new Blob([createExpenseHtmlExport(expenses, filterSummary(filters))], {
+          type: "text/html;charset=utf-8",
+        }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "expense-tracker-export.html";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      setError("We couldn't create your HTML download. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
+  const updateFilter = (field: keyof Filters, value: string) => {
+    setPage(0);
+    setFilters((current) => ({ ...current, [field]: value }));
+  };
+  function openComposer() {
+    resetForm();
+    setError("");
+    setComposer(true);
+  }
+  const palette = ["#4564cf", "#789d83", "#c39b60", "#a28caa", "#7c9fae"];
+  const visibleCategories = monthCategories.slice(0, 4);
+  const remainder = monthCategories
+    .slice(4)
+    .reduce((sum, item) => sum + item.totalCents, 0);
+  const activeFilters = Object.values(filters).filter(Boolean).length;
+  return (
+    <main className="ledger-workspace" id="overview" tabIndex={-1}>
+      <div className="workspace-topline">
+        <span>
+          <i className="status-dot" aria-hidden="true" />
+          YOUR PERSONAL LEDGER
+        </span>
+        <span>EVERYDAY SPENDING, SIMPLY KEPT.</span>
+      </div>
+      <header className="overview-heading">
+        <div>
+          <p className="eyebrow">A LITTLE CLARITY GOES A LONG WAY</p>
+          <h1>Your money, at a glance.</h1>
+          <p>The little things add up. Make sense of them here.</p>
+        </div>
+        <button type="button" onClick={openComposer}>
+          <Icon name="plus" />
+          Add expense
+        </button>
+      </header>
+      {!composer && !deleting && error && (
+        <div className="form-message error" role="alert">
+          {error}{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => void load()}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      <section
+        className="overview-grid"
+        aria-label="Monthly spending overview"
+        aria-busy={loading}
+      >
+        <div className="spending-hero">
+          <div className="hero-label">
+            <span>{monthLabel}</span>
+            <span>IDR</span>
+          </div>
+          <div className="hero-amount">
+            {!hasSummary ? (loading ? "..." : "Unavailable") : formatCurrency(monthTotal)}
+          </div>
+          <p className="hero-caption">Total spent this month</p>
+          <div className="hero-footer">
+            <div>
+              <span>Spent today</span>
+              <strong>{!hasSummary ? (loading ? "..." : "Unavailable") : formatCurrency(todayTotal)}</strong>
+            </div>
+            <div>
+              <span>Transactions this month</span>
+              <strong>{!hasSummary ? (loading ? "..." : "Unavailable") : monthCount}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="breakdown">
+          <div className="section-heading">
+            <h2>Where it goes</h2>
+            <span>This month</span>
+          </div>
+          {!hasSummary ? (
+            <p className="breakdown-empty">{loading ? "Getting the full picture..." : "Your spending breakdown is temporarily unavailable."}</p>
+          ) : monthCategories.length ? (
+            <>
+              <div className="mix-bar" aria-hidden="true">
+                {monthCategories.map((item, index) => (
+                  <span
+                    key={item.category}
+                    style={{
+                      width: `${item.percentage}%`,
+                      background: palette[Math.min(index, 4)],
+                    }}
+                  />
+                ))}
+              </div>
+              <ul className="breakdown-list">
+                {visibleCategories.map((item, index) => (
+                  <li key={item.category}>
+                    <i
+                      style={{ background: palette[index] }}
+                      aria-hidden="true"
+                    />
+                    <span>{item.category}</span>
+                    <strong>{formatCurrency(item.totalCents)}</strong>
+                  </li>
+                ))}
+                {remainder > 0 && (
+                  <li>
+                    <i style={{ background: palette[4] }} aria-hidden="true" />
+                    <span>Other categories</span>
+                    <strong>{formatCurrency(remainder)}</strong>
+                  </li>
+                )}
+              </ul>
+            </>
+          ) : (
+            <div className="breakdown-empty">
+              <Icon name="overview" size={28} />
+              <p>Add an expense to see how your spending comes together.</p>
+            </div>
+          )}
+        </div>
+      </section>
+      <section
+        className="transactions-panel"
+        id="transactions"
+        aria-labelledby="recent-heading"
+      >
+        <div className="transactions-heading">
+          <div>
+            <h2 id="recent-heading">Your transactions</h2>
+            <p>
+              {loading
+                ? "Updating your ledger..."
+                : `${totalCount} expense${totalCount === 1 ? "" : "s"}`}{" "}
+              {activeFilters > 0 ? "matching your filters" : "in your ledger"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="secondary-button download-button"
+            disabled={loading || exporting || Boolean(error)}
+            onClick={() => void downloadHtml()}
+          >
+            <Icon name="download" size={17} />
+            {exporting ? "Preparing..." : "Download HTML"}
+          </button>
+        </div>
+        <div className="transaction-toolbar">
+          <label className="search-field" htmlFor="expense-search">
+            <span className="sr-only">Search descriptions</span>
+            <Icon name="search" size={18} />
+            <input
+              id="expense-search"
+              type="search"
+              placeholder="Find an expense..."
+              value={filters.search}
+              maxLength={120}
+              onChange={(event) => updateFilter("search", event.target.value)}
+            />
+          </label>
+          <label htmlFor="filter-category">
+            <span className="sr-only">Category</span>
+            <select
+              id="filter-category"
+              value={filters.category}
+              onChange={(event) => updateFilter("category", event.target.value)}
+            >
+              <option value="">All categories</option>
+              {categories.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <details className="filter-details">
+          <summary>
+            <Icon name="filter" size={16} />
+            Filter expenses{" "}
+            <span>
+              {activeFilters ? `${activeFilters} active` : "Date & amount"}
+            </span>
+          </summary>
+          <div className="filter-fields">
+            <label htmlFor="filter-date-from">
+              From date
+              <input
+                id="filter-date-from"
+                type="date"
+                value={filters.from}
+                onChange={(event) => updateFilter("from", event.target.value)}
+              />
+            </label>
+            <label htmlFor="filter-date-to">
+              To date
+              <input
+                id="filter-date-to"
+                type="date"
+                value={filters.to}
+                onChange={(event) => updateFilter("to", event.target.value)}
+              />
+            </label>
+            <label htmlFor="filter-min-amount">
+              Minimum amount (IDR)
+              <input
+                id="filter-min-amount"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={filters.minAmount}
+                onChange={(event) =>
+                  updateFilter("minAmount", event.target.value)
+                }
+              />
+            </label>
+            <label htmlFor="filter-max-amount">
+              Maximum amount (IDR)
+              <input
+                id="filter-max-amount"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={filters.maxAmount}
+                onChange={(event) =>
+                  updateFilter("maxAmount", event.target.value)
+                }
+              />
+            </label>
+          </div>
+          <div className="filter-actions">
+            <span>{filterSummary(filters)}</span>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setPage(0);
+                setFilters(EMPTY_FILTERS);
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+        </details>
+        {loading ? (
+          <p className="state" role="status">
+            Loading your expenses...
+          </p>
+        ) : items.length === 0 ? (
+          <div className="state">
+            <Icon name="wallet" size={34} />
+            <strong>
+              {activeFilters
+                ? "Nothing here just yet."
+                : "Start with the little things."}
+            </strong>
+            <p>
+              {activeFilters
+                ? "Try a different search, or clear your filters."
+                : "Your morning coffee is a good place to start."}
+            </p>
+            {activeFilters ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setPage(0);
+                  setFilters(EMPTY_FILTERS);
+                }}
+              >
+                Clear filters
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={openComposer}
+              >
+                Add your first expense
+                <Icon name="arrow" size={16} />
+              </button>
+            )}
+          </div>
+        ) : (
+          <ul className="ledger-list">
+            {items.map((expense) => (
+              <li
+                className="ledger-row"
+                data-category={expense.category}
+                key={expense.id}
+              >
+                <span className="category-avatar">
+                  <Icon name={categoryIcon(expense.category)} />
+                </span>
+                <div className="row-description">
+                  <strong>{expense.description}</strong>
+                  <span>{expense.category}</span>
+                </div>
+                <time className="row-date" dateTime={expense.date}>
+                  {formatExpenseDate(expense.date)}
+                </time>
+                <span className="row-amount">
+                  {formatCurrency(expense.amountCents)}
+                </span>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    aria-label={`Edit ${expense.description}`}
+                    onClick={() => edit(expense)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button delete-button"
+                    aria-label={`Delete ${expense.description}`}
+                    onClick={() => {
+                      setError("");
+                      setDeleting(expense);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {totalCount > PAGE_SIZE && (
+          <nav className="list-pagination" aria-label="Expense pages">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={loading || page === 0}
+              onClick={() => setPage((value) => value - 1)}
+            >
+              Previous
+            </button>
+            <span>
+              Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+            </span>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={loading || (page + 1) * PAGE_SIZE >= totalCount}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              Next
+            </button>
+          </nav>
+        )}
+      </section>
+      <footer className="workspace-footer">
+        <span>Made for the way you spend.</span>
+        <span>Ledger / Your everyday, accounted for.</span>
+      </footer>
+      <Modal
+        open={composer}
+        onClose={() => setComposer(false)}
+        title={editing ? "Edit expense" : "Add an expense"}
+        id="composer"
+        busy={saving}
+      >
+        <form onSubmit={submit} noValidate>
+          <div className="recorder-fields">
+            <label htmlFor="quick-amount">
+              <span className="field-label">
+                Amount <span>(IDR)</span>
+              </span>
+              <div className="amount-input">
+                <span>Rp</span>
+                <input
+                  id="quick-amount"
+                  data-autofocus
+                  placeholder="0"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  required
+                  aria-required="true"
+                />
+              </div>
+            </label>
+            <label htmlFor="quick-description">
+              What was it?
+              <input
+                id="quick-description"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                required
+                aria-required="true"
+                placeholder="Coffee, train, groceries..."
+              />
+            </label>
+          </div>
+          <fieldset className="category-chips">
+            <legend>Category</legend>
+            {categories.map((value) => (
+              <button
+                type="button"
+                key={value}
+                className="category-button"
+                aria-pressed={category === value}
+                onClick={() => setCategory(value)}
+              >
+                <Icon name={categoryIcon(value)} size={16} />
+                {value}
+              </button>
+            ))}
+          </fieldset>
+          <details className="custom-category-details">
+            <summary>+ Create a category</summary>
+            <div className="new-category">
+              <label htmlFor="new-category">
+                New category
+                <input
+                  id="new-category"
+                  value={newCategory}
+                  maxLength={40}
+                  onChange={(event) => setNewCategory(event.target.value)}
+                  placeholder="Pet care"
+                />
+              </label>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={addingCategory}
+                onClick={() => void addCategory()}
+              >
+                {addingCategory ? "Adding..." : "Add category"}
+              </button>
+            </div>
+          </details>
+          <details className="when-details">
+            <summary>
+              When <span>{date ? formatExpenseDate(date) : "Now"}</span>
+            </summary>
+            <div>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setRelativeDate(0)}
+              >
+                Now
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setRelativeDate(1)}
+              >
+                Yesterday
+              </button>
+              <label htmlFor="quick-date">
+                Date and time
+                <input
+                  id="quick-date"
+                  type="datetime-local"
+                  value={date}
+                  onChange={(event) => setDate(event.target.value)}
+                  required
+                  aria-required="true"
+                />
+              </label>
+            </div>
+          </details>
+          {error && (
+            <p className="form-message error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="quick-actions">
+            <button type="submit" disabled={saving}>
+              {saving ? "Saving..." : editing ? "Save changes" : "Add expense"}
+            </button>
+            {editing && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setComposer(false)}
+              >
+                Cancel edit
+              </button>
+            )}
+          </div>
         </form>
-      </section>
-      <section className="expenses-panel" aria-labelledby="expenses-heading">
-        <div className="expenses-heading"><div><p className="eyebrow">Current total</p><p className="total">{formatCurrency(total)}</p></div><h2 id="expenses-heading">Expenses</h2></div>
-        {isLoading ? <p className="state" role="status">Loading expenses…</p> : loadError ? <div className="state error" role="alert"><p>{loadError}</p><button className="text-button" type="button" onClick={() => void loadExpenses()}>Try again</button></div> : expenses.length === 0 ? <p className="state">No expenses recorded yet. Add your first one to get started.</p> : <>
-          <div className="expense-search"><label htmlFor="expense-search">Search expenses</label><div><input id="expense-search" type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Description or category" />{searchQuery && <button className="clear-search" type="button" onClick={() => setSearchQuery("")} aria-label="Clear search">Clear</button>}</div></div>
-          {filteredExpenses.length === 0 ? <p className="state search-empty" role="status">No expenses match your search.</p> : <ul className="expense-list">{filteredExpenses.map((expense) => <li key={expense.id}><div><p className="expense-description">{expense.description}</p><p className="expense-category">{expense.category}</p><time dateTime={expense.date}>Expense time: {formatExpenseDate(expense.date)}</time><br /><time dateTime={expense.createdAt}>Recorded: {formatCreatedAt(expense.createdAt)}</time></div><strong>{formatCurrency(expense.amountCents)}</strong></li>)}</ul>}
-          <section className="calendar" aria-labelledby="calendar-heading">
-            <div className="calendar-heading"><h3 id="calendar-heading">Expense calendar</h3><div className="calendar-navigation"><button type="button" onClick={() => setCalendarMonth((month) => shiftLocalMonth(month, -1))} aria-label="Previous month">Previous</button><p aria-live="polite">{monthLabel}</p><button type="button" onClick={() => setCalendarMonth((month) => shiftLocalMonth(month, 1))} aria-label="Next month">Next</button></div></div>
-            <div className="calendar-weekdays" aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div>
-            <div className="calendar-grid">{calendarDays.map((day, index) => {
-              if (!day) return <span className="calendar-blank" key={`blank-${index}`} aria-hidden="true" />;
-              const dayKey = getLocalDateKey(day);
-              const dayExpenses = expensesByDay.get(dayKey) ?? [];
-              const dayTotal = calculateTotal(dayExpenses.map((expense) => expense.amountCents));
-              const selected = selectedDayKey === dayKey;
-              return <button className={`calendar-day${selected ? " selected" : ""}${dayExpenses.length ? " has-expenses" : ""}`} key={dayKey} type="button" onClick={() => setSelectedDayKey(dayKey)} aria-label={`Select ${dayKey}${dayExpenses.length ? `, ${dayExpenses.length} expense${dayExpenses.length === 1 ? "" : "s"}` : ", no expenses"}`} aria-pressed={selected}><span>{day.getDate()}</span>{dayExpenses.length > 0 && <small>{dayExpenses.length} · {formatCurrency(dayTotal)}</small>}</button>;
-            })}</div>
-            {selectedDayKey && <div className="selected-day" aria-live="polite"><h4>Expenses on {selectedDayKey}</h4>{selectedDayExpenses.length === 0 ? <p>No expenses recorded for this day.</p> : <ul>{selectedDayExpenses.map((expense) => <li key={expense.id}><span>{expense.description} <em>{expense.category}</em></span><strong>{formatCurrency(expense.amountCents)}</strong></li>)}</ul>}</div>}
-          </section>
-        </>}
-      </section>
-    </section>
-  </main>;
+      </Modal>
+      <Modal
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(undefined)}
+        title="Delete this expense?"
+        id="delete"
+        busy={removing}
+      >
+        <p className="muted">
+          {deleting?.description} will be removed. You can undo this afterward.
+        </p>
+        {error && (
+          <p className="form-message error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="quick-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            data-autofocus
+            disabled={removing}
+            onClick={() => setDeleting(undefined)}
+          >
+            Keep it
+          </button>
+          <button
+            type="button"
+            disabled={removing}
+            onClick={() => void remove()}
+          >
+            {removing ? "Deleting..." : "Delete expense"}
+          </button>
+        </div>
+      </Modal>
+      {notice && !composer && (
+        <div className="feedback-toast" role="status">
+          <Icon name="check" size={17} />
+          <span>{notice}</span>
+          {undo && (
+            <button
+              className="text-button"
+              type="button"
+              disabled={restoring}
+              onClick={() => void restore()}
+            >
+              {restoring ? "Restoring..." : "Undo"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Dismiss notification"
+            onClick={() => {
+              setNotice("");
+              setUndo(undefined);
+            }}
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      )}
+    </main>
+  );
 }
