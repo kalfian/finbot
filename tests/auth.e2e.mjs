@@ -414,6 +414,46 @@ try {
     await assertLayout(page, width);
   await page.locator(".theme-toggle").click();
   for (const width of [1440, 390, 320]) await assertLayout(page, width);
+  const contrastFailures = await page.evaluate(() => {
+    const rgb = (value) =>
+      (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const luminance = (values) =>
+      values
+        .map((v) => {
+          v /= 255;
+          return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        })
+        .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+    return [
+      ...document.querySelectorAll(
+        ".period-switch button, .timezone-pill, .category-filter-link, .proof-toggle",
+      ),
+    ]
+      .filter((node) => {
+        const color = luminance(rgb(getComputedStyle(node).color));
+        let parent = node;
+        let background;
+        while (parent) {
+          const bg = getComputedStyle(parent).backgroundColor;
+          if (bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
+            background = bg;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+        if (!background) return false;
+        const bg = luminance(rgb(background));
+        return (
+          (Math.max(color, bg) + 0.05) / (Math.min(color, bg) + 0.05) < 4.5
+        );
+      })
+      .map((node) => node.textContent.trim());
+  });
+  assert.deepEqual(
+    contrastFailures,
+    [],
+    "Dark-theme controls need readable text contrast.",
+  );
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Account", exact: true }).click();
@@ -454,6 +494,63 @@ try {
     200,
   );
   await waitForHeading(page, "Your money, at a glance.");
+
+  // A known UTC boundary must move between calendar days, without changing the record.
+  const boundaryResponse = await page.request.post(
+    baseURL + "/api/v1/expenses",
+    {
+      data: {
+        amountCents: 123450,
+        description: "Timezone boundary",
+        category: "Food",
+        date: "2026-01-01T00:30:00.000Z",
+      },
+    },
+  );
+  assert.equal(boundaryResponse.status(), 201);
+  const boundary = (await boundaryResponse.json()).expense;
+  await page.locator(".timezone-pill").click();
+  await page
+    .getByLabel("Display timezone", { exact: true })
+    .selectOption("America/Los_Angeles");
+  await page
+    .getByRole("button", { name: "Save timezone", exact: true })
+    .click();
+  await page
+    .getByText("Timezone saved. Your spending periods are updated.", {
+      exact: true,
+    })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Usage date", { exact: true }).fill("2025-12-31");
+  await page.getByRole("button", { name: "Day", exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".hero-amount")?.textContent?.includes("1.234,5"),
+  );
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Week", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await page.reload();
+  assert.match(
+    await page.locator(".timezone-pill").textContent(),
+    /America\/Los Angeles/,
+  );
+  const unchanged = (
+    await (await page.request.get(baseURL + "/api/v1/expenses")).json()
+  ).expenses.find((item) => item.id === boundary.id);
+  assert.equal(unchanged.date, "2026-01-01T00:30:00.000Z");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Menu", exact: true }).click();
+  await page
+    .getByRole("link", { name: "Integrations", exact: true })
+    .waitFor({ state: "visible" });
+  await assertNoHorizontalOverflow(page);
+  await page.getByRole("button", { name: "Menu", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   // Exercise the preserved workflows from the redesigned navigation.
   await page.getByRole("link", { name: "Calendar & reports" }).click();

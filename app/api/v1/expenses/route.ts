@@ -1,6 +1,7 @@
+import { getUserSettings } from "@/lib/user-settings";
 import { requireApiAuth } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
-import { getExpenses, validateExpense } from "@/lib/expense-api";
+import { validateExpense } from "@/lib/expense-api";
 import { createExpenseRepository } from "@/lib/expenses";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
 import { budgetSnapshot } from "@/lib/budget";
@@ -17,8 +18,7 @@ export function GET(request: Request): Response {
   const start = searchParams.get("from") ?? "";
   const end = searchParams.get("to") ?? "";
   if (!validateReportRange(start, end)) return Response.json({ error: "Choose a valid date range." }, { status: 400 });
-  if (!query && !start && !end) return getExpenses(createExpenseRepository(database, auth.user.id));
-  return Response.json({ expenses: filterReportExpenses(createExpenseRepository(database, auth.user.id).list(), { query, start, end }) });
+  return Response.json({ timezone: getUserSettings(database,auth.user.id).timezone, expenses: filterReportExpenses(createExpenseRepository(database, auth.user.id).list(), { query, start, end, timezone: getUserSettings(database, auth.user.id).timezone }) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request): Promise<Response> {

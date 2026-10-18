@@ -4,10 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { formatExpenseDate } from "@/lib/date-time";
 import type { Expense } from "@/lib/expenses";
 import ProofControls from "./proof-controls";
-import {
-  queryDashboardExpenses,
-  type CategorySummary,
-} from "@/lib/dashboard-expenses";
+import { queryDashboardExpenses } from "@/lib/dashboard-expenses";
 import {
   getBrowserLocalDateTime,
   saveExpense,
@@ -15,7 +12,8 @@ import {
 } from "@/lib/expense-form";
 import { createExpenseHtmlExport } from "@/lib/expense-html-export";
 import { formatCurrency, toAmountCents } from "@/lib/money";
-import { periodRange } from "@/lib/periods";
+import { usePreferences } from "./components/preferences";
+import { dateKeyInZone, type UsageSnapshot } from "@/lib/timezone";
 import { Icon, categoryIcon } from "./components/ui-icon";
 import { Modal } from "./components/modal";
 import { apiFetch } from "@/lib/client-fetch";
@@ -45,24 +43,6 @@ const apiMessage = (body: unknown, fallback: string) =>
   typeof body.error === "string"
     ? body.error
     : fallback;
-const queryFor = (range: { start: Date; end: Date }, limit: number) =>
-  new URLSearchParams({
-    start: range.start.toISOString(),
-    end: range.end.toISOString(),
-    limit: String(limit),
-  });
-
-function localDateRange(from: string, to: string) {
-  const params = new URLSearchParams();
-  if (from) params.set("start", new Date(`${from}T00:00`).toISOString());
-  if (to) {
-    const end = new Date(`${to}T00:00`);
-    end.setDate(end.getDate() + 1);
-    params.set("end", end.toISOString());
-  }
-  return params;
-}
-
 function amountFilter(value: string) {
   if (!value) return undefined;
   if (value === "0") return 0;
@@ -70,7 +50,9 @@ function amountFilter(value: string) {
 }
 
 function filterQuery(filters: Filters, limit: number, offset = 0) {
-  const params = localDateRange(filters.from, filters.to);
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
   if (filters.search.trim()) params.set("search", filters.search.trim());
   if (filters.category) params.set("category", filters.category);
   const min = amountFilter(filters.minAmount);
@@ -97,11 +79,14 @@ function filterSummary(filters: Filters) {
 }
 
 export default function ExpenseTracker() {
+  const { timezone, openSettings } = usePreferences();
+  const [usage, setUsage] = useState<UsageSnapshot>();
+  const [usagePeriod, setUsagePeriod] = useState<"day" | "week" | "month">(
+    "month",
+  );
+  const [referenceDate, setReferenceDate] = useState("");
   const [items, setItems] = useState<Expense[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [todayTotal, setTodayTotal] = useState(0);
-  const [monthTotal, setMonthTotal] = useState(0);
-  const [monthCount, setMonthCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [hasSummary, setHasSummary] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -124,15 +109,21 @@ export default function ExpenseTracker() {
   const [saving, setSaving] = useState(false);
   const [composer, setComposer] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const [monthCategories, setMonthCategories] = useState<CategorySummary[]>([]);
-  const [monthLabel, setMonthLabel] = useState("This month");
   const categories = customCategories;
   const load = useCallback(async () => {
     const request = ++loadSequence.current;
     setLoading(true);
     setError("");
     try {
-      const response = await apiFetch("/api/v1/expenses");
+      const [response, usageResponse] = await Promise.all([
+        apiFetch("/api/v1/expenses"),
+        apiFetch(
+          `/api/v1/usage${referenceDate ? `?date=${referenceDate}` : ""}`,
+        ),
+      ]);
+      const usageBody = await usageResponse.json();
+      if (!usageResponse.ok || !usageBody.usage)
+        throw Error("We couldn't load your spending periods.");
       const body: unknown = await response.json();
       if (request !== loadSequence.current) return;
       if (
@@ -149,14 +140,7 @@ export default function ExpenseTracker() {
       const recentData = queryDashboardExpenses(
         records,
         filterQuery(filters, PAGE_SIZE, page * PAGE_SIZE),
-      );
-      const todayData = queryDashboardExpenses(
-        records,
-        queryFor(periodRange("today"), 1),
-      );
-      const monthData = queryDashboardExpenses(
-        records,
-        queryFor(periodRange("month"), 1),
+        timezone,
       );
       if (page > 0 && page * PAGE_SIZE >= recentData.totalCount) {
         setPage(Math.max(0, Math.ceil(recentData.totalCount / PAGE_SIZE) - 1));
@@ -164,12 +148,7 @@ export default function ExpenseTracker() {
       }
       setItems(recentData.expenses);
       setTotalCount(recentData.totalCount);
-      setTodayTotal(todayData.summary?.totalCents ?? 0);
-      setMonthTotal(monthData.summary?.totalCents ?? 0);
-      setMonthCount(
-        monthData.summary?.transactionCount ?? monthData.totalCount ?? 0,
-      );
-      setMonthCategories(monthData.insights?.categories ?? []);
+      setUsage(usageBody.usage);
       setHasSummary(true);
     } catch (caught) {
       if (request === loadSequence.current)
@@ -181,13 +160,30 @@ export default function ExpenseTracker() {
     } finally {
       if (request === loadSequence.current) setLoading(false);
     }
-  }, [filters, page]);
+  }, [filters, page, timezone, referenceDate]);
   useEffect(() => {
     void load();
     return () => {
       loadSequence.current += 1;
     };
   }, [load]);
+  useEffect(() => {
+    if (referenceDate) return;
+    const checkDay = () => {
+      if (
+        document.visibilityState === "visible" &&
+        usage?.date &&
+        dateKeyInZone(new Date(), timezone) !== usage.date
+      )
+        void load();
+    };
+    const timer = window.setInterval(checkDay, 60_000);
+    window.addEventListener("focus", checkDay);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", checkDay);
+    };
+  }, [load, referenceDate, timezone, usage?.date]);
   useEffect(() => {
     void (async () => {
       try {
@@ -226,12 +222,6 @@ export default function ExpenseTracker() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       setDate(getBrowserLocalDateTime());
-      setMonthLabel(
-        new Intl.DateTimeFormat("en", {
-          month: "long",
-          year: "numeric",
-        }).format(new Date()),
-      );
     });
     return () => cancelAnimationFrame(frame);
   }, []);
@@ -408,6 +398,7 @@ export default function ExpenseTracker() {
     return queryDashboardExpenses(
       body.expenses as Expense[],
       filterQuery(filters, Number.MAX_SAFE_INTEGER),
+      timezone,
     ).expenses;
   }
 
@@ -416,9 +407,18 @@ export default function ExpenseTracker() {
     try {
       const expenses = await fetchFilteredExpenses();
       const url = URL.createObjectURL(
-        new Blob([createExpenseHtmlExport(expenses, filterSummary(filters))], {
-          type: "text/html;charset=utf-8",
-        }),
+        new Blob(
+          [
+            createExpenseHtmlExport(
+              expenses,
+              `${filterSummary(filters)}; Timezone: ${timezone}`,
+              timezone,
+            ),
+          ],
+          {
+            type: "text/html;charset=utf-8",
+          },
+        ),
       );
       const link = document.createElement("a");
       link.href = url;
@@ -442,6 +442,21 @@ export default function ExpenseTracker() {
     setError("");
     setComposer(true);
   }
+  const selectedUsage = usage?.[usagePeriod];
+  const monthCategories = selectedUsage?.categories ?? [];
+  const monthTotal = selectedUsage?.totalCents ?? 0;
+  const monthCount = selectedUsage?.transactionCount ?? 0;
+  const todayTotal = usage?.day.totalCents ?? 0;
+  const periodLabel = { day: "Day", week: "Week", month: "Month" }[usagePeriod];
+  const dateLabel = (value: string) =>
+    new Intl.DateTimeFormat("en", {
+      day: "numeric",
+      month: "short",
+      timeZone: "UTC",
+    }).format(new Date(value + "T12:00:00Z"));
+  const monthLabel = selectedUsage
+    ? `${dateLabel(selectedUsage.start)}${selectedUsage.start !== selectedUsage.end ? ` – ${dateLabel(selectedUsage.end)}` : ""}`
+    : "Loading period";
   const palette = ["#4564cf", "#789d83", "#c39b60", "#a28caa", "#7c9fae"];
   const visibleCategories = monthCategories.slice(0, 4);
   const remainder = monthCategories
@@ -455,13 +470,17 @@ export default function ExpenseTracker() {
           <i className="status-dot" aria-hidden="true" />
           YOUR PERSONAL LEDGER
         </span>
-        <span>EVERYDAY SPENDING, SIMPLY KEPT.</span>
+        <button type="button" className="timezone-pill" onClick={openSettings}>
+          <span className="status-dot" />
+          {timezone.replaceAll("_", " ")}
+          <span>Change</span>
+        </button>
       </div>
       <header className="overview-heading">
         <div>
-          <p className="eyebrow">A LITTLE CLARITY GOES A LONG WAY</p>
+          <p className="eyebrow">YOUR SPENDING, IN PERSPECTIVE</p>
           <h1>Your money, at a glance.</h1>
-          <p>The little things add up. Make sense of them here.</p>
+          <p>A clear view of your everyday spending. On your time.</p>
         </div>
         <button type="button" onClick={openComposer}>
           <Icon name="plus" />
@@ -480,9 +499,43 @@ export default function ExpenseTracker() {
           </button>
         </div>
       )}
+      <div className="usage-toolbar">
+        <div className="period-switch" aria-label="Spending period">
+          {(["day", "week", "month"] as const).map((period) => (
+            <button
+              key={period}
+              type="button"
+              aria-pressed={usagePeriod === period}
+              onClick={() => setUsagePeriod(period)}
+            >
+              {{ day: "Day", week: "Week", month: "Month" }[period]}
+            </button>
+          ))}
+        </div>
+        <div className="usage-date">
+          <label>
+            As of
+            <input
+              type="date"
+              aria-label="Usage date"
+              value={referenceDate || usage?.date || ""}
+              onChange={(event) => setReferenceDate(event.target.value)}
+            />
+          </label>
+          {referenceDate && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setReferenceDate("")}
+            >
+              Today
+            </button>
+          )}
+        </div>
+      </div>
       <section
         className="overview-grid"
-        aria-label="Monthly spending overview"
+        aria-label="Spending overview"
         aria-busy={loading}
       >
         <div className="spending-hero">
@@ -490,27 +543,37 @@ export default function ExpenseTracker() {
             <span>{monthLabel}</span>
             <span>IDR</span>
           </div>
-          <div className="hero-amount">
+          <div
+            className="hero-amount"
+            key={`${usagePeriod}-${timezone}-${monthTotal}`}
+            aria-live="polite"
+          >
             {!hasSummary
               ? loading
                 ? "..."
                 : "Unavailable"
               : formatCurrency(monthTotal)}
           </div>
-          <p className="hero-caption">Total spent this month</p>
+          <p className="hero-caption">Spent this {periodLabel.toLowerCase()}</p>
           <div className="hero-footer">
             <div>
-              <span>Spent today</span>
+              <span>
+                {usagePeriod === "day" ? "This week" : "On selected day"}
+              </span>
               <strong>
                 {!hasSummary
                   ? loading
                     ? "..."
                     : "Unavailable"
-                  : formatCurrency(todayTotal)}
+                  : formatCurrency(
+                      usagePeriod === "day"
+                        ? (usage?.week.totalCents ?? 0)
+                        : todayTotal,
+                    )}
               </strong>
             </div>
             <div>
-              <span>Transactions this month</span>
+              <span>Transactions this {periodLabel.toLowerCase()}</span>
               <strong>
                 {!hasSummary ? (loading ? "..." : "Unavailable") : monthCount}
               </strong>
@@ -520,7 +583,7 @@ export default function ExpenseTracker() {
         <div className="breakdown">
           <div className="section-heading">
             <h2>Where it goes</h2>
-            <span>This month</span>
+            <span>This {periodLabel.toLowerCase()}</span>
           </div>
           {!hasSummary ? (
             <p className="breakdown-empty">
@@ -548,7 +611,25 @@ export default function ExpenseTracker() {
                       style={{ background: palette[index] }}
                       aria-hidden="true"
                     />
-                    <span>{item.category}</span>
+                    <button
+                      type="button"
+                      className="category-filter-link"
+                      onClick={() => {
+                        updateFilter("category", item.category);
+                        document
+                          .getElementById("transactions")
+                          ?.scrollIntoView({
+                            behavior: matchMedia(
+                              "(prefers-reduced-motion: reduce)",
+                            ).matches
+                              ? "instant"
+                              : "smooth",
+                          });
+                      }}
+                      aria-label={`Filter ${item.category} transactions`}
+                    >
+                      {item.category}
+                    </button>
                     <strong>{formatCurrency(item.totalCents)}</strong>
                   </li>
                 ))}
@@ -693,7 +774,7 @@ export default function ExpenseTracker() {
             </button>
           </div>
         </details>
-        {loading ? (
+        {loading && !hasSummary ? (
           <p className="state" role="status">
             Loading your expenses...
           </p>
@@ -733,7 +814,10 @@ export default function ExpenseTracker() {
             )}
           </div>
         ) : (
-          <ul className="ledger-list">
+          <ul
+            className={`ledger-list ${loading ? "is-refreshing" : ""}`}
+            aria-busy={loading}
+          >
             {items.map((expense) => (
               <li
                 className="ledger-row"
@@ -756,7 +840,7 @@ export default function ExpenseTracker() {
                   />
                 </div>
                 <time className="row-date" dateTime={expense.date}>
-                  {formatExpenseDate(expense.date)}
+                  {formatExpenseDate(expense.date, undefined, timezone)}
                 </time>
                 <span className="row-amount">
                   {formatCurrency(expense.amountCents)}
@@ -911,7 +995,7 @@ export default function ExpenseTracker() {
                 Yesterday
               </button>
               <label htmlFor="quick-date">
-                Date and time
+                Date and time (device timezone)
                 <input
                   id="quick-date"
                   type="datetime-local"

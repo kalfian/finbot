@@ -1,3 +1,4 @@
+import { dateKeyInZone } from "./timezone";
 export type CalendarExpense = {
   id: number;
   amountCents: number;
@@ -21,10 +22,11 @@ export function getLocalDateKey(dateTime: string | Date): string {
 export function summarizeLocalMonth<T extends Pick<CalendarExpense, "date" | "amountCents">>(
   expenses: readonly T[],
   month: Date,
+  timezone?: string,
 ): { count: number; totalCents: number } {
   const monthKey = getLocalDateKey(month).slice(0, 7);
   return expenses.reduce((summary, expense) => {
-    if (getLocalDateKey(expense.date).startsWith(monthKey)) {
+    if ((timezone ? dateKeyInZone(expense.date, timezone) : getLocalDateKey(expense.date)).startsWith(monthKey)) {
       summary.count += 1;
       summary.totalCents += expense.amountCents;
     }
@@ -47,10 +49,11 @@ export function filterExpenses<T extends Pick<CalendarExpense, "description" | "
 
 export function groupExpensesByLocalDate<T extends Pick<CalendarExpense, "date">>(
   expenses: readonly T[],
+  timezone?: string,
 ): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const expense of expenses) {
-    const key = getLocalDateKey(expense.date);
+    const key = timezone ? dateKeyInZone(expense.date,timezone) : getLocalDateKey(expense.date);
     const group = groups.get(key);
     if (group) group.push(expense);
     else groups.set(key, [expense]);

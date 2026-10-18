@@ -4,7 +4,7 @@ Ledger is a focused personal expense tracker with IDR amounts, selectable light/
 
 ## Layout and navigation
 
-The dashboard uses a desktop navigation rail and compact mobile navigation for Overview and Transactions. A cobalt monthly spending card leads the overview, with today's spending, the monthly transaction count, and a category breakdown calculated from actual monthly totals. Smaller screens stack these sections. Warm light and deep teal dark palettes share locally served Manrope and DM Serif Display typography.
+The dashboard uses a desktop navigation rail and an expandable mobile menu with all destinations visible for Overview and Transactions. A cobalt spending card leads the overview, with Day/Week/Month controls and a reference date. Counts and category shares follow the selected period in the saved account timezone. Smaller screens stack these sections. Cool light and navy dark palettes retain the original simple sans-serif typography.
 
 The shell contains theme and Account controls plus Calendar & reports, Integrations, and administrator-only Users links. Account opens password settings and logout. The focused overview stays simple; the separate Calendar & reports page retains receipt entry, calendar and PDF export. Integrations manages monthly limits and tokens.
 
@@ -24,6 +24,10 @@ The empty state distinguishes an unused ledger from filters with no matches. Dow
 
 Visible labels, selected-category states, keyboard focus indicators, live feedback, and reduced-motion preferences are supported. Mobile layouts preserve touch targets and allow category controls to wrap. Composer, Account, and deletion dialogs use native modal semantics, cycle keyboard focus within their visible controls, support Escape when idle, and restore focus to their opener.
 
-The dashboard derives summaries and pagination from the authenticated REST v1 snapshot. Account isolation is enforced by the retained upstream backend.
+The dashboard derives summaries and pagination from the authenticated REST v1 snapshot, with usage summaries from /api/v1/usage. Account isolation is enforced by the retained upstream backend.
 
 The browser smoke test uses an isolated database and checks authentication, CRUD/undo, failed-save recovery, custom categories, export, filters, stale responses, pagination, modal keyboard behavior, theme changes, and horizontal clipping at desktop/tablet/phone widths. See `tests/auth.e2e.mjs`; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` when using a separately provisioned Chromium binary.
+
+## Motion and feedback
+
+Period values, dialogs, menus and notifications have brief entrance transitions. Hover/focus/press states clarify interactive controls; category rows filter the transaction list. Existing rows remain visible during filter refresh. All motion honors prefers-reduced-motion; keyboard focus remains visible and dialogs retain focus handling. Secondary screens share the dashboard navigation and palette.

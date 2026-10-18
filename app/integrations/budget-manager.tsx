@@ -1,11 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { usePreferences } from "../components/preferences";
 import { formatCurrency, toAmountCents } from "@/lib/money";
 
 type Budget = { month: string; monthCents: number; monthlyLimitCents: number | null; remainingCents: number | null; exceeded: boolean };
 
 export default function BudgetManager() {
+  const {timezone} = usePreferences();
   const [budget, setBudget] = useState<Budget | null>(null);
   const [amount, setAmount] = useState("");
   const [error, setError] = useState("");
@@ -15,7 +17,7 @@ export default function BudgetManager() {
     void fetch("/api/v1/budget").then((response) => response.ok ? response.json() : null)
       .then((body) => { if (body?.budget) setBudget(body.budget); else setError("Monthly limit could not be loaded."); })
       .catch(() => setError("Monthly limit could not be loaded."));
-  }, []);
+  }, [timezone]);
 
   async function save(monthlyLimitCents: number | null) {
     setPending(true);
@@ -47,7 +49,7 @@ export default function BudgetManager() {
 
   return <section className="access-panel budget-panel" aria-labelledby="budget-heading">
     <p className="section-label">Spending</p><h2 id="budget-heading">Monthly limit</h2>
-    <p className="access-copy">One recurring IDR limit for every calendar month in Asia/Jakarta. No limit is set by default.</p>
+    <p className="access-copy">One recurring IDR limit for every calendar month in {timezone}. No limit is set by default.</p>
     {budget && <div className="budget-current" role="status">
       <div><span>Current limit</span><strong>{budget.monthlyLimitCents === null ? "Not set" : formatCurrency(budget.monthlyLimitCents)}</strong></div>
       <div><span>Spent in {budget.month}</span><strong>{formatCurrency(budget.monthCents)}</strong></div>

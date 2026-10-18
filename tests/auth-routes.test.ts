@@ -56,6 +56,24 @@ test("auth routes enforce first-login password change, roles, rotation, logout, 
     assert.equal(changed.status, 200);
     const adminCookie = cookieOf(changed);
     const changedBody = await changed.json();
+    const settingsRoute = await import("../app/api/v1/settings/route");
+    const usageRoute = await import("../app/api/v1/usage/route");
+    assert.equal(settingsRoute.GET(new Request("http://localhost/api/v1/settings")).status,401);
+    assert.equal(usageRoute.GET(new Request("http://localhost/api/v1/usage")).status,401);
+    assert.equal(settingsRoute.GET(new Request("http://localhost/api/v1/settings",{headers:{cookie:temporaryCookie}})).status,401);
+    const settingsRequest = (timezone: unknown, origin="http://localhost") => new Request("http://localhost/api/v1/settings",{method:"PUT",headers:{cookie:adminCookie,origin,"content-type":"application/json"},body:JSON.stringify({timezone})});
+    assert.equal((await settingsRoute.PUT(settingsRequest("UTC","https://attacker.example"))).status,403);
+    assert.equal((await settingsRoute.PUT(settingsRequest("invalid"))).status,400);
+    assert.equal((await settingsRoute.PUT(settingsRequest("America/New_York"))).status,200);
+    const settingsRead = settingsRoute.GET(new Request("http://localhost/api/v1/settings",{headers:{authorization:`Bearer ${changedBody.accessToken}`}}));
+    assert.equal((await settingsRead.json()).settings.timezone,"America/New_York");
+    assert.equal(usageRoute.GET(new Request("http://localhost/api/v1/usage?date=2026-02-30",{headers:{cookie:adminCookie}})).status,400);
+    const usageRead = usageRoute.GET(new Request("http://localhost/api/v1/usage?date=2026-03-08",{headers:{cookie:adminCookie}}));
+    assert.equal(usageRead.headers.get("cache-control"),"no-store");
+    const usageBody = (await usageRead.json()).usage;
+    assert.equal(usageBody.timezone,"America/New_York");
+    assert.equal(usageBody.week.start,"2026-03-02");
+
     assert.notEqual(adminCookie, temporaryCookie);
     assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { cookie: temporaryCookie } })).status, 401);
     assert.equal(expensesRoute.GET(new Request("http://localhost/api/v1/expenses", { headers: { authorization: `Bearer ${temporaryLogin.accessToken}` } })).status, 401);

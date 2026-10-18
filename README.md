@@ -1,6 +1,6 @@
 # Finbot / Ledger
 
-A personal expense tracker with a redesigned **Ledger** dashboard: monthly spending, real category totals, searchable transactions, and a focused add/edit dialog. Warm light and deep teal dark themes use locally served Manrope and DM Serif Display fonts.
+A personal expense tracker with a redesigned **Ledger** dashboard: monthly spending, real category totals, searchable transactions, and a focused add/edit dialog. Cool light and navy dark themes retain the original simple sans-serif typography.
 
 The dashboard uses the same authenticated **REST v1** contracts as external integrations. Each account owns its expenses, categories, receipt proofs, monthly limit, source IDs, and integration tokens. Calendar, PDF reporting, and receipt upload/retry remain available through **Calendar & reports**. Integrations and administrator-only user management are linked from the navigation.
 
@@ -15,6 +15,10 @@ Captured from the production build using synthetic records in an isolated databa
 ### Focused expense entry
 
 ![Ledger add expense dialog](docs/images/ledger-composer.png)
+
+### Timezone preferences
+
+![Account timezone settings](docs/images/ledger-timezone.png)
 
 ## Quick start
 
@@ -39,13 +43,22 @@ npm start -- --hostname 127.0.0.1
 
 - Add/edit in a focused dialog; failed saves retain your draft.
 - Search descriptions or categories, select a category, and expand date/amount filters. Results display eight per page; HTML export includes all matching results.
-- Monthly overview and category totals cover the browser's local month, independent of transaction filters.
+- Switch Day / Week / Month and choose a reference date to review usage. Totals and category shares follow your saved timezone, independent of transaction filters. Weeks run Monday through Sunday.
 - Attach receipts from a transaction row, or attach files during entry on Calendar & reports. Up to three JPEG/PNG/WebP/PDF files per expense, 5 MiB each.
 - Deletion permanently removes proof files and source mappings. Dashboard Undo is offered only for records without proofs and creates a new record/ID; it does not restore integration source IDs.
-- Calendar & reports provides the existing calendar and PDF export. Its search/date filters are separate from dashboard filters; PDF dates use inclusive Asia/Jakarta days.
+- Calendar & reports provides the existing calendar and PDF export. Its search/date filters are separate from dashboard filters; PDF dates use inclusive days in your saved timezone.
 - Integrations manages user-owned categories, recurring monthly spending limits, and tokens. Each new user starts with Food, Transport, Bills, Shopping, Health, and Other.
 
 See [product behavior](docs/product-and-dashboard.md), [security](docs/auth-and-security.md), and [verification](docs/development-and-verification.md).
+
+## Timezone settings
+
+Open the timezone badge on the dashboard, or Account → Timezone. Choose a named timezone such as Asia/Jakarta, America/New_York, or UTC. The preference is per account and applies to usage, transaction dates, calendar grouping, date filters, HTML/PDF reports, REST and MCP. Existing accounts default to Asia/Jakarta.
+
+Changing timezone never rewrites transaction timestamps: the database and write API retain UTC instants. Date/time entry is explicitly labeled as device timezone and converted to UTC on save. A day may be 23 or 25 hours during daylight-saving transitions; usage compares actual local calendar dates.
+
+- REST: `GET/PUT /api/v1/settings` (`{"timezone":"America/New_York"}`), `GET /api/v1/usage?date=2026-03-08`.
+- MCP: `get_settings`, `set_timezone`, `usage_summary`. Existing expense filters, summaries, budget snapshots and PDF tools use the saved timezone too.
 
 ## Connect an LLM agent
 
@@ -72,6 +85,8 @@ Start here:
 
 | Capability | REST | MCP |
 | --- | --- | --- |
+| Display timezone | `GET/PUT /api/v1/settings` | `get_settings`, `set_timezone` |
+| Daily/weekly/monthly usage | `GET /api/v1/usage?date=YYYY-MM-DD` | `usage_summary` |
 | Record and get post-write budget snapshot | `POST /api/v1/expenses` | `create_expense` |
 | Replace an expense and recalculate budget | `PATCH /api/v1/expenses/:id` | `update_expense` |
 | Permanently delete an expense and proofs | `DELETE /api/v1/expenses/:id` | `delete_expense` |
@@ -82,7 +97,7 @@ Start here:
 | List and manage categories | `/api/v1/categories` | `list_categories`, `create_category`, `update_category`, `delete_category` |
 | Category summary and PDF tool | — | `expense_summary`, `export_report_pdf` |
 
-The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes Jakarta `date`/`month`, `todayCents`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
+The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes `timezone`, local `date`/`month`, `todayCents`, `weekCents`, `weekStart`, `weekEnd`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
 
 For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 

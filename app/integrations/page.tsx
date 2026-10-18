@@ -1,3 +1,6 @@
+import { getDatabase } from "@/lib/db";
+import { getUserSettings } from "@/lib/user-settings";
+import DashboardShell from "../dashboard-shell";
 import Link from "next/link";
 import TokenManager from "./token-manager";
 import BudgetManager from "./budget-manager";
@@ -10,7 +13,7 @@ export const metadata = { title: "Integrations | Expense Tracker" };
 
 export default async function Integrations() {
   const user = await requirePageUser();
-  return <div className="legacy-surface"><main className="integrations-shell">
+  return <DashboardShell user={user} initialTimezone={getUserSettings(getDatabase(),user.id).timezone}><div className="legacy-surface"><main className="integrations-shell">
     <header className="site-header">
       <Link className="wordmark" href="/"><span className="wordmark-rule" aria-hidden="true" /><span>Expense Tracker</span></Link>
       <div className="header-actions"><ThemeToggle /><Link href="/" className="header-link">Back to activity</Link><AccountNav username={user.username} role={user.role} /></div>
@@ -27,5 +30,5 @@ export default async function Integrations() {
         <Link href="/docs" className="docs-link">Read full API and MCP documentation →</Link>
       </section>
     </div>
-  </main></div>;
+  </main></div></DashboardShell>;
 }

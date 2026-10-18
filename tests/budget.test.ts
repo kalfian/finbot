@@ -19,6 +19,7 @@ test("monthly limit persists and summaries use the expense's Jakarta day and mon
     expenses.create({ amountCents: 2_072_625_00, description: "Other", category: "Other", date: "2026-09-25T17:00:00.000Z" });
     const snapshot = budgetSnapshot(database, 1, "2026-09-26T17:00:00.000Z");
     assert.deepEqual(snapshot, {
+      timezone: "Asia/Jakarta", weekStart: "2026-09-21", weekEnd: "2026-09-27", weekCents: 263_789_400,
       date: "2026-09-27", month: "2026-09", todayCents: 0,
       monthCents: 263_789_400, monthlyLimitCents: 200_000_000,
       remainingCents: -63_789_400, exceeded: true,

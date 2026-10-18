@@ -1,19 +1,7 @@
 import type { Metadata } from "next";
-import localFont from "next/font/local";
-
-const ledgerFont = localFont({
-  src: "../public/fonts/manrope-variable.ttf",
-  variable: "--font-ledger",
-  display: "swap",
-});
-const editorialFont = localFont({
-  src: "../public/fonts/dm-serif-display.ttf",
-  variable: "--font-editorial",
-  weight: "400",
-  display: "swap",
-});
 import "./legacy-surface.css";
 import "./globals.css";
+import "./refinement.css";
 import { EXPENSE_RECORDER_DESIGN_CSS } from "@/lib/expense-recorder-design";
 
 export const metadata: Metadata = {
@@ -29,7 +17,6 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${ledgerFont.variable} ${editorialFont.variable}`}
       suppressHydrationWarning
     >
       <head>

@@ -1,3 +1,5 @@
+import { getUserSettings, setUserTimezone } from "./user-settings";
+import { usageSnapshot } from "./usage";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import * as z from "zod/v4";
@@ -16,9 +18,26 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   const categories = createCategoryRepository(database, userId);
   const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
   const failure = (code: string, error: string, hint: string) => ({ isError: true, ...result({ error, code, hint }) });
+  server.registerTool("get_settings", {
+    title: "Get display settings", description: "Get the authenticated user's IANA timezone used for dates, reports and daily/weekly/monthly usage. Expense timestamps remain UTC.", inputSchema: {},
+  }, async () => result({ settings: getUserSettings(database, userId) }));
+  server.registerTool("set_timezone", {
+    title: "Set display timezone", description: "Set the authenticated user's IANA display/grouping timezone, only when requested by the user. This changes calendar usage and reports, never stored expense timestamps.",
+    inputSchema: { timezone: z.string() },
+  }, async ({ timezone }) => {
+    try { return result({ settings: setUserTimezone(database, userId, timezone) }); }
+    catch { return failure("INVALID_TIMEZONE", "Choose a valid IANA timezone.", "Use a name such as Asia/Jakarta, America/New_York or UTC."); }
+  });
+  server.registerTool("usage_summary", {
+    title: "Daily, weekly and monthly usage", description: "Return spending totals, counts and categories for a date's day, Monday-Sunday week and month in the account timezone. Defaults to today there; UTC expense timestamps remain unchanged.",
+    inputSchema: { date: z.string().default("") },
+  }, async ({ date }) => {
+    if (date && !validBudgetDate(date)) return failure("INVALID_USAGE_DATE", "date must use YYYY-MM-DD.", "Pass a calendar date in the account timezone or omit it for today.");
+    return result({ usage: usageSnapshot(database, userId, date || undefined) });
+  });
   server.registerTool("list_expenses", {
     title: "List expenses",
-    description: "List expenses newest first, optionally filtering description or category and inclusive Asia/Jakarta calendar dates.",
+    description: "List expenses newest first, optionally filtering description or category and inclusive calendar dates in the account timezone.",
     inputSchema: {
       query: z.string().default(""),
       from: z.string().default(""),
@@ -27,11 +46,11 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   }, async ({ query, from, to }) => {
     if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
       "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
-    return result({ expenses: filterReportExpenses(repository.list(), { query, start: from, end: to }) });
+    return result({ timezone: getUserSettings(database,userId).timezone, expenses: filterReportExpenses(repository.list(), { query, start: from, end: to, timezone: getUserSettings(database, userId).timezone }) });
   });
   server.registerTool("create_expense", {
     title: "Create expense",
-    description: "Record one expense. Call list_categories first. amountCents is positive IDR minor units and date is ISO UTC. sourceId is an optional caller-generated idempotency key: use transport metadata when already available, otherwise omit it; never ask the end user for sourceId. Returns budget totals for the expense's Jakarta day and month.",
+    description: "Record one expense. Call list_categories first. amountCents is positive IDR minor units and date is ISO UTC. sourceId is an optional caller-generated idempotency key: use transport metadata when already available, otherwise omit it; never ask the end user for sourceId. Returns budget totals for the expense's day, Monday-based week and month in the account timezone.",
     inputSchema: {
       amountCents: z.number().int().positive().safe(),
       description: z.string().trim().min(1),
@@ -150,11 +169,11 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("budget_status", {
     title: "Budget status",
-    description: "Return Asia/Jakarta day and month spending, recurring monthly IDR limit, signed remaining amount, and exceeded status. Defaults to today.",
+    description: "Return account-timezone day, week and month spending, recurring monthly IDR limit, signed remaining amount, and exceeded status. Defaults to today.",
     inputSchema: { date: z.string().default("") },
   }, async ({ date }) => {
     if (date && !validBudgetDate(date)) return failure("INVALID_BUDGET_DATE", "date must use YYYY-MM-DD.",
-      "Pass an Asia/Jakarta calendar date or leave date empty for today.");
+      "Pass a calendar date in the account timezone or leave date empty for today.");
     return result(budgetSnapshot(database, userId, date || new Date().toISOString()));
   });
   server.registerTool("set_monthly_limit", {
@@ -218,7 +237,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("expense_summary", {
     title: "Expense summary",
-    description: "Total spend and counts by category using the same search and Asia/Jakarta date filters.",
+    description: "Total spend and counts by category using the same search and account-timezone date filters.",
     inputSchema: {
       query: z.string().default(""),
       from: z.string().default(""),
@@ -227,7 +246,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   }, async ({ query, from, to }) => {
     if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
       "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
-    const expenses = filterReportExpenses(repository.list(), { query, start: from, end: to });
+    const expenses = filterReportExpenses(repository.list(), { query, start: from, end: to, timezone: getUserSettings(database, userId).timezone });
     const categories: Record<string, { count: number; amountCents: number }> = {};
     for (const expense of expenses) {
       const category = categories[expense.category] ?? { count: 0, amountCents: 0 };
@@ -235,7 +254,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       category.amountCents += expense.amountCents;
       categories[expense.category] = category;
     }
-    return result({ count: expenses.length, totalCents: expenses.reduce((sum, item) => sum + item.amountCents, 0), categories });
+    return result({ timezone: getUserSettings(database,userId).timezone, count: expenses.length, totalCents: expenses.reduce((sum, item) => sum + item.amountCents, 0), categories });
   });
   server.registerTool("export_report_pdf", {
     title: "Export expense report",
@@ -248,7 +267,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   }, async ({ query, from, to }) => {
     if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
       "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
-    const pdf = await buildExpensePdf(repository.list(), { query, start: from, end: to });
+    const pdf = await buildExpensePdf(repository.list(), { query, start: from, end: to, timezone: getUserSettings(database, userId).timezone });
     return { content: [{ type: "resource", resource: {
       uri: "expense-tracker://reports/filtered.pdf", mimeType: "application/pdf", blob: pdf.toString("base64"),
     } }] };

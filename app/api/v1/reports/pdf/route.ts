@@ -1,3 +1,4 @@
+import { getUserSettings } from "@/lib/user-settings";
 import { requireApiAuth } from "@/lib/api-auth";
 import { getDatabase } from "@/lib/db";
 import { validateReportRange } from "@/lib/expense-filters";
@@ -15,7 +16,7 @@ export async function GET(request: Request): Promise<Response> {
   const end = searchParams.get("to") ?? "";
   const query = searchParams.get("q") ?? "";
   if (!validateReportRange(start, end)) return Response.json({ error: "Choose a valid date range." }, { status: 400 });
-  const pdf = await buildExpensePdf(createExpenseRepository(database, auth.user.id).list(), { query, start, end });
+  const pdf = await buildExpensePdf(createExpenseRepository(database, auth.user.id).list(), { query, start, end, timezone: getUserSettings(database, auth.user.id).timezone });
   return new Response(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",

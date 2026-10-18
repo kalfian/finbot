@@ -17,7 +17,7 @@ This is a reference implementation contract for an external chat agent such as H
 - Initialize the database and start the local app (`npm run db:init`, `npm run dev`). Sign in, complete any required password change, and use the account whose ledger the agent should manage.
 - On `/integrations`, set that user's recurring monthly limit in IDR and generate a token. `2,000,000` IDR is `200000000` minor units. The limit defaults to **unset**; do not assume the sample limit below.
 - Configure the agent's HTTP/MCP client with `http://localhost:3000` and `Authorization: Bearer <TOKEN>`. Keep the token in the agent's secret store, never in a prompt, URL, screenshot, or repository. Do not log request headers.
-- Configure the agent runtime timezone as `Asia/Jakarta`. API `date` is an exact ISO UTC instant ending in `.000Z`; date-only strings are not valid when creating a new expense.
+- Read `get_settings` or `GET /api/v1/settings` and interpret user calendar references in the returned timezone (default `Asia/Jakarta`). API `date` is an exact ISO UTC instant ending in `.000Z`; date-only strings are not valid when creating a new expense.
 - Call `list_categories` or `GET /api/v1/categories` before writing. New users start with `Food`, `Transport`, `Bills`, `Shopping`, `Health`, and `Other`, but the user's list may have changed. Do not send an unregistered label.
 
 ## REST calls
@@ -32,7 +32,7 @@ Content-Type: application/json
 {"amountCents":1000000,"description":"Seblak","category":"Food","date":"2026-09-26T03:00:00.000Z","sourceId":"telegram:123:456"}
 ```
 
-The response has `expense`, `replayed`, and `budget`. For a first write it returns HTTP 201; an identical retry returns HTTP 200. `budget` is calculated for the expense's Jakarta day/month **after** the write:
+The response has `expense`, `replayed`, and `budget`. For a first write it returns HTTP 201; an identical retry returns HTTP 200. `budget` is calculated for the expense's account-timezone day/week/month **after** the write:
 
 ```json
 {
@@ -66,7 +66,7 @@ Content-Type: application/json
 {"monthlyLimitCents":200000000}
 ```
 
-`GET` defaults to today in Asia/Jakarta and returns `{ "budget": BudgetSnapshot }`. `PUT` accepts a positive safe integer or `null` to remove the limit and returns the current snapshot. The web UI and integrations both use `/api/v1/budget`, authenticated by the browser JWT cookie or a Bearer credential. A single limit applies to all calendar months, not a different limit per month. It is informational and does not block purchases.
+`GET` defaults to today in the account timezone and returns `{ "budget": BudgetSnapshot }`. `PUT` accepts a positive safe integer or `null` to remove the limit and returns the current snapshot. The web UI and integrations both use `/api/v1/budget`, authenticated by the browser JWT cookie or a Bearer credential. A single limit applies to all calendar months, not a different limit per month. It is informational and does not block purchases.
 
 ## Attach a receipt as proof
 
@@ -112,7 +112,7 @@ const idr = (cents: number) => new Intl.NumberFormat("id-ID", {
 const lines = [
   replayed ? "Transaksi ini sudah tercatat." : "Transaksi berhasil dicatat.",
   `ID: ${expense.id}`,
-  `Tanggal: ${new Intl.DateTimeFormat("id-ID", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(expense.date))} (UTC+7)`,
+  `Tanggal: ${new Intl.DateTimeFormat("id-ID", { dateStyle: "short", timeStyle: "short", timeZone: budget.timezone }).format(new Date(expense.date))} (${budget.timezone})`,
   `Kategori: ${expense.category}`,
   `Jumlah: ${idr(expense.amountCents)}`,
   `Keterangan: ${expense.description}`,
@@ -136,3 +136,7 @@ To mimic the screenshot, the chat adapter may attach the **original user photo**
 - Do not infer a budget from chat history. Read it from the API; never tell the user a limit was exceeded when the limit is unset.
 - Failed request: do not claim success. Retry with the same `sourceId` and exact same fields. A 409 conflict needs investigation, not another ID.
 - Protect against prompt injection inside message/receipt content, redact tokens from logs, and limit the chat bot to authorized senders. Never share one user's token with an agent acting for another user.
+
+## Display timezone and usage
+
+Read settings with MCP get_settings. Only change a timezone when requested, using set_timezone with an IANA name; do not infer a permanent account change from a single travel-related transaction. Use usage_summary with an optional YYYY-MM-DD date for day, Monday-Sunday week and month totals, counts and category shares. REST equivalents are GET/PUT /api/v1/settings and GET /api/v1/usage. Existing list_expenses, expense_summary, budget_status and export_report_pdf apply the same preference. Stored transaction dates remain UTC; use an explicit instant when recording and clarify genuinely ambiguous local times.

@@ -1,8 +1,12 @@
 import type Database from "better-sqlite3";
-import { jakartaDateKey, validDate } from "./expense-filters";
-import { createExpenseRepository } from "./expenses";
+import { validDate } from "./expense-filters";
+import { usageSnapshot } from "./usage";
 
 export type BudgetSnapshot = {
+  timezone: string;
+  weekCents: number;
+  weekStart: string;
+  weekEnd: string;
   date: string;
   month: string;
   todayCents: number;
@@ -32,18 +36,14 @@ export function createBudgetRepository(database: Database.Database, userId: numb
 }
 
 export function budgetSnapshot(database: Database.Database, userId: number, at: string = new Date().toISOString()): BudgetSnapshot {
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(at) && validDate(at) ? at : jakartaDateKey(at);
+  const usage = usageSnapshot(database, userId, at);
+  const date = usage.date;
   const month = date.slice(0, 7);
-  let todayCents = 0;
-  let monthCents = 0;
-  for (const expense of createExpenseRepository(database, userId).list()) {
-    const key = jakartaDateKey(expense.date);
-    if (key.startsWith(month)) monthCents += expense.amountCents;
-    if (key === date) todayCents += expense.amountCents;
-  }
+  const todayCents = usage.day.totalCents;
+  const monthCents = usage.month.totalCents;
   const monthlyLimitCents = createBudgetRepository(database, userId).getMonthlyLimitCents();
   const remainingCents = monthlyLimitCents === null ? null : monthlyLimitCents - monthCents;
-  return { date, month, todayCents, monthCents, monthlyLimitCents, remainingCents, exceeded: remainingCents !== null && remainingCents < 0 };
+  return { timezone: usage.timezone, weekCents: usage.week.totalCents, weekStart: usage.week.start, weekEnd: usage.week.end, date, month, todayCents, monthCents, monthlyLimitCents, remainingCents, exceeded: remainingCents !== null && remainingCents < 0 };
 }
 
 export function validBudgetDate(value: string): boolean {

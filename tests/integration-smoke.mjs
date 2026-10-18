@@ -94,7 +94,28 @@ try {
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
   assert.equal(mcp.status, 200);
-  assert.equal((await mcp.json()).result.tools.length, 15);
+  const toolNames = (await mcp.json()).result.tools.map((tool) => tool.name);
+  assert.equal(toolNames.length, 18);
+  for (const name of ["get_settings", "set_timezone", "usage_summary"]) assert.ok(toolNames.includes(name));
+  const settingsResponse = await fetch(`${base}/api/v1/settings`, {
+    method: "PUT", headers: { ...authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({ timezone: "America/Los_Angeles" }),
+  });
+  assert.equal(settingsResponse.status, 200);
+  assert.equal((await settingsResponse.json()).settings.timezone, "America/Los_Angeles");
+  const usageResponse = await fetch(`${base}/api/v1/usage?date=2026-09-23`, { headers: authorization });
+  assert.equal(usageResponse.status, 200);
+  const restUsage = await usageResponse.json();
+  const mcpUsageResponse = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: { ...authorization, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call",
+      params: { name: "usage_summary", arguments: { date: "2026-09-23" } } }),
+  });
+  assert.equal(mcpUsageResponse.status, 200);
+  const mcpUsage = JSON.parse((await mcpUsageResponse.json()).result.content[0].text);
+  assert.deepEqual(mcpUsage, restUsage);
+  assert.ok(restUsage.usage.day.transactionCount > 0);
   const rejectedMcp = await fetch(`${base}/mcp`, {
     method: "POST",
     headers: { ...authorization, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },

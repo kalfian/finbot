@@ -27,7 +27,7 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     const init = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
     assert.equal(init.result.serverInfo.name, "expense-tracker");
     const tools = await call("tools/list", {});
-    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["attach_expense_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense"]);
+    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense"].sort());
     const createdCategory = await call("tools/call", { name: "create_category", arguments: { name: "Travel" } });
     const categoryId = JSON.parse(createdCategory.result.content[0].text).category.id;
     const renamedCategory = await call("tools/call", { name: "update_category", arguments: { categoryId, name: "Transit" } });
@@ -122,4 +122,37 @@ test("MCP reads and writes only the authenticated user's ledger", async () => {
   } finally {
     database.close();
   }
+});
+
+
+test("MCP timezone settings, usage and date-filtered summaries agree without changing UTC instants", async () => {
+  const db = new Database(":memory:");
+  initializeDatabase(db);
+  const { createExpenseRepository } = await import("../lib/expenses");
+  const repo = createExpenseRepository(db,1);
+  repo.create({amountCents:123450,description:"Boundary",category:"Food",date:"2026-01-01T00:30:00.000Z"});
+  const before = repo.list();
+  const other = createUserRepository(db).create("zone-mcp-user","temporary123");
+  let id=0;
+  async function call(name: string, args: unknown = {}, userId=1) {
+    const response = await handleExpenseMcp(new Request("http://localhost/mcp",{method:"POST",headers:{"content-type":"application/json",accept:"application/json, text/event-stream"},body:JSON.stringify({jsonrpc:"2.0",id:++id,method:"tools/call",params:{name,arguments:args}})}),db,userId);
+    return (await response.json()).result;
+  }
+  const value = (result: {content: {text:string}[]}) => JSON.parse(result.content[0].text);
+  try {
+    assert.equal(value(await call("get_settings")).settings.timezone,"Asia/Jakarta");
+    assert.equal(value(await call("set_timezone",{timezone:"America/Los_Angeles"})).settings.timezone,"America/Los_Angeles");
+    const usage = value(await call("usage_summary",{date:"2025-12-31"})).usage;
+    assert.equal(usage.day.totalCents,123450);
+    assert.equal(usage.month.totalCents,123450);
+    assert.equal(usage.week.start,"2025-12-29");
+    assert.equal(value(await call("list_expenses",{from:"2025-12-31",to:"2025-12-31"})).expenses.length,1);
+    assert.equal(value(await call("expense_summary",{from:"2025-12-31",to:"2025-12-31"})).totalCents,123450);
+    assert.equal(value(await call("budget_status",{date:"2025-12-31"})).monthCents,123450);
+    assert.equal((await call("set_timezone",{timezone:"bad"})).isError,true);
+    assert.equal((await call("usage_summary",{date:"2026-02-30"})).isError,true);
+    assert.equal(value(await call("get_settings",{},other.id)).settings.timezone,"Asia/Jakarta");
+    assert.equal(value(await call("usage_summary",{},other.id)).usage.month.totalCents,0);
+    assert.deepEqual(repo.list(),before);
+  } finally {db.close();}
 });

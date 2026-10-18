@@ -28,6 +28,10 @@ export function openDatabase(): Database.Database {
 export function initializeDatabase(database = openDatabase()): void {
   database.pragma("foreign_keys = ON");
   createUsersTable(database);
+  database.exec(`CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    timezone TEXT NOT NULL DEFAULT 'Asia/Jakarta'
+  )`);
   createBootstrapAdmin(database);
   const columns = database
     .prepare("SELECT name FROM pragma_table_info('expenses')")

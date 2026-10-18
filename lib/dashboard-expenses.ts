@@ -1,3 +1,4 @@
+import { dateKeyInZone, DEFAULT_TIMEZONE } from "./timezone";
 import type { Expense } from "./expenses";
 
 export type CategorySummary = {
@@ -11,11 +12,14 @@ export type CategorySummary = {
 export function queryDashboardExpenses(
   records: readonly Expense[],
   params: URLSearchParams,
+  timezone = DEFAULT_TIMEZONE,
 ) {
   const search = (params.get("search") ?? "").toLocaleLowerCase();
   const category = params.get("category");
   const start = params.get("start");
   const end = params.get("end");
+  const from = params.get("from");
+  const to = params.get("to");
   const minimum = params.get("minAmountCents");
   const maximum = params.get("maxAmountCents");
   const matches = records.filter(
@@ -25,6 +29,8 @@ export function queryDashboardExpenses(
           .toLocaleLowerCase()
           .includes(search)) &&
       (!category || item.category === category) &&
+      (!from || dateKeyInZone(item.date,timezone) >= from) &&
+      (!to || dateKeyInZone(item.date,timezone) <= to) &&
       (!start || Date.parse(item.date) >= Date.parse(start)) &&
       (!end || Date.parse(item.date) < Date.parse(end)) &&
       (minimum === null || item.amountCents >= Number(minimum)) &&

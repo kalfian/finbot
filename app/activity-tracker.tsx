@@ -2,6 +2,8 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { usePreferences } from "./components/preferences";
+import { dateKeyInZone } from "@/lib/timezone";
 import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Paperclip, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import ThemeToggle from "./theme-toggle";
 import ProofControls from "./proof-controls";
@@ -35,6 +37,7 @@ function formatDay(key: string): string {
 }
 
 export default function ExpenseTracker({ user }: { user: CurrentUser }) {
+  const {timezone} = usePreferences();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -106,20 +109,20 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       setDate(getBrowserLocalDateTime());
-      const localMonth = startOfLocalMonth(new Date());
+      const localMonth = startOfLocalMonth(new Date(dateKeyInZone(new Date(),timezone)+"T12:00"));
       setCurrentMonth(localMonth);
       setCalendarMonth(localMonth);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [timezone]);
 
   const total = useMemo(() => calculateTotal(expenses.map((expense) => expense.amountCents)), [expenses]);
-  const monthlySummary = useMemo(() => summarizeLocalMonth(expenses, currentMonth), [expenses, currentMonth]);
+  const monthlySummary = useMemo(() => summarizeLocalMonth(expenses, currentMonth, timezone), [expenses, currentMonth, timezone]);
   const validRange = validateReportRange(reportStart, reportEnd);
   const filteredExpenses = useMemo(() => filterReportExpenses(expenses, {
-    query: searchQuery, start: reportStart, end: reportEnd,
-  }), [expenses, searchQuery, reportStart, reportEnd]);
-  const expensesByDay = useMemo(() => groupExpensesByLocalDate(expenses), [expenses]);
+    query: searchQuery, start: reportStart, end: reportEnd, timezone,
+  }), [expenses, searchQuery, reportStart, reportEnd, timezone]);
+  const expensesByDay = useMemo(() => groupExpensesByLocalDate(expenses, timezone), [expenses, timezone]);
   const calendarDays = useMemo(() => buildCalendarDays(calendarMonth), [calendarMonth]);
   const selectedDayExpenses = selectedDayKey ? expensesByDay.get(selectedDayKey) ?? [] : [];
   const selectedDayTotal = calculateTotal(selectedDayExpenses.map((expense) => expense.amountCents));
@@ -175,7 +178,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
       setDate(getBrowserLocalDateTime());
       setFiles([]);
       if (proofInputRef.current) proofInputRef.current.value = "";
-      const savedDate = new Date(validation.value.date);
+      const savedDate = new Date(dateKeyInZone(validation.value.date,timezone)+"T12:00");
       setCalendarMonth(startOfLocalMonth(savedDate));
       setSelectedDayKey(getLocalDateKey(savedDate));
       const refreshed = await loadExpenses();
@@ -341,8 +344,8 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
             </div>
           </div>
           <div className="filter-dates">
-            <div className="report-date"><label htmlFor="report-start">From (UTC+7)</label><input id="report-start" type="date" value={reportStart} onChange={(event) => setReportStart(event.target.value)} /></div>
-            <div className="report-date"><label htmlFor="report-end">To (UTC+7)</label><input id="report-end" type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></div>
+            <div className="report-date"><label htmlFor="report-start">From ({timezone})</label><input id="report-start" type="date" value={reportStart} onChange={(event) => setReportStart(event.target.value)} /></div>
+            <div className="report-date"><label htmlFor="report-end">To ({timezone})</label><input id="report-end" type="date" value={reportEnd} onChange={(event) => setReportEnd(event.target.value)} /></div>
           </div>
           <p className="filter-hint">List and PDF use these filters; the calendar shows all activity.</p>
           {!validRange && <p className="report-note error" role="alert">Choose valid dates, with the end on or after the start.</p>}
@@ -359,17 +362,17 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
                   {filteredExpenses.length === 0
                     ? <div className="empty-state"><p>No expenses match your filters.</p><button className="inline-button" type="button" onClick={() => { setSearchQuery(""); setReportStart(""); setReportEnd(""); }}>Clear filters</button></div>
                     : <ul className="expense-list">{filteredExpenses.map((expense) => <li className={editingExpenseId === expense.id ? "is-editing" : undefined} key={expense.id}>
-                      <div className="expense-main"><p className="expense-description">{expense.description}</p><div className="expense-meta"><span>{expense.category}</span><time dateTime={expense.date}>{formatExpenseDate(expense.date)}</time></div><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></div>
+                      <div className="expense-main"><p className="expense-description">{expense.description}</p><div className="expense-meta"><span>{expense.category}</span><time dateTime={expense.date}>{formatExpenseDate(expense.date, undefined, timezone)}</time></div><ProofControls expenseId={expense.id} count={expense.proofCount} onChange={loadExpenses} /></div>
                       <div className="expense-side"><strong>{formatCurrency(expense.amountCents)}</strong><div className="expense-actions"><button className="edit-expense-button" type="button" onClick={() => startEditing(expense)} disabled={deletingExpenseId === expense.id} aria-label={`Edit ${expense.description}`}><Pencil size={14} aria-hidden="true" /> Edit</button><button className="delete-expense-button" type="button" onClick={() => void handleDelete(expense)} disabled={deletingExpenseId === expense.id} aria-label={`Delete ${expense.description}`}><Trash2 size={14} aria-hidden="true" /> {deletingExpenseId === expense.id ? "Deleting…" : "Delete"}</button></div></div>
                     </li>)}</ul>}
                 </>}
               </div>
               <div id="calendar-panel" role="tabpanel" aria-labelledby="calendar-tab" hidden={activityView !== "calendar"}>
                 <div className="calendar-heading">
-                  <div><h3 id="calendar-heading">{monthLabel}</h3><p>{summarizeLocalMonth(expenses, calendarMonth).count} expenses this month</p></div>
+                  <div><h3 id="calendar-heading">{monthLabel}</h3><p>{summarizeLocalMonth(expenses, calendarMonth, timezone).count} expenses this month</p></div>
                   <div className="calendar-navigation">
                     <button type="button" onClick={() => moveCalendarMonth(-1)} aria-label="Previous month" title="Previous month"><ChevronLeft size={18} aria-hidden="true" /></button>
-                    <button type="button" onClick={() => { setCalendarMonth(startOfLocalMonth(new Date())); setSelectedDayKey(null); }}>Today</button>
+                    <button type="button" onClick={() => { setCalendarMonth(startOfLocalMonth(new Date(dateKeyInZone(new Date(),timezone)+"T12:00"))); setSelectedDayKey(null); }}>Today</button>
                     <button type="button" onClick={() => moveCalendarMonth(1)} aria-label="Next month" title="Next month"><ChevronRight size={18} aria-hidden="true" /></button>
                   </div>
                 </div>
@@ -393,7 +396,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
               </div>
             </>}
         {!isLoading && !loadError && <section className="report-export" aria-labelledby="report-heading">
-          <div className="report-export-heading"><div><p className="section-label">Export</p><h3 id="report-heading">Expense report</h3></div><p>UTC+7 · IDR</p></div>
+          <div className="report-export-heading"><div><p className="section-label">Export</p><h3 id="report-heading">Expense report</h3></div><p>{timezone} · IDR</p></div>
           <div className="report-controls"><button className="download-button" type="button" disabled={!validRange} onClick={() => void downloadReport()}><Download size={17} aria-hidden="true" /> Download PDF</button></div>
           {reportError && <p className="report-note error" role="alert">{reportError}</p>}
           <p className="report-note">{reportCount} {reportCount === 1 ? "expense" : "expenses"} match the filters above</p>
@@ -410,7 +413,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
           </div>
           <div className="field"><label htmlFor="description">Description</label><input ref={descriptionRef} id="description" name="description" type="text" placeholder="e.g. Groceries" value={description} onChange={(event) => { setDescription(event.target.value); clearFieldError("description"); }} aria-describedby={invalidField === "description" ? "description-error" : undefined} aria-invalid={invalidField === "description"} required />{fieldError("description")}</div>
               <div className="field"><label htmlFor="category">Category</label><select ref={categoryRef} id="category" name="category" value={category} onChange={(event) => { setCategory(event.target.value); clearFieldError("category"); }} aria-describedby={invalidField === "category" ? "category-error" : undefined} aria-invalid={invalidField === "category"} required disabled={!categories.length}>{!categories.length && <option value="">No categories available</option>}{categories.map((expenseCategory) => <option key={expenseCategory} value={expenseCategory}>{expenseCategory}</option>)}</select>{fieldError("category")}</div>
-          <div className="field"><label htmlFor="date">Date and time</label><input ref={dateRef} id="date" name="date" type="datetime-local" step="60" value={date} onChange={(event) => { setDate(event.target.value); clearFieldError("date"); }} aria-describedby={invalidField === "date" ? "date-error" : undefined} aria-invalid={invalidField === "date"} required />{fieldError("date")}</div>
+          <div className="field"><label htmlFor="date">Date and time (device timezone)</label><input ref={dateRef} id="date" name="date" type="datetime-local" step="60" value={date} onChange={(event) => { setDate(event.target.value); clearFieldError("date"); }} aria-describedby={invalidField === "date" ? "date-error" : undefined} aria-invalid={invalidField === "date"} required />{fieldError("date")}</div>
           <div className="field proof-field"><label htmlFor="proof-files"><Paperclip size={15} aria-hidden="true" /> Proof (optional)</label>
             <input ref={proofInputRef} id="proof-files" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple
               onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />

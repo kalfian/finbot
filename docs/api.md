@@ -18,8 +18,18 @@ All financial endpoints require a login cookie or Bearer credential. Browser mut
 | Administrator user management | /api/users |
 | Streamable HTTP MCP | /mcp |
 
-Expense GET accepts q, from and to; dates use inclusive Jakarta days. The new dashboard reads the full user-owned snapshot and derives local-calendar filters, amount/category filters, summaries and pagination in the client. Those additional dashboard filters are not REST query parameters.
+Expense GET accepts q, from and to; dates use inclusive calendar days in the authenticated user's saved timezone. The new dashboard reads the full user-owned snapshot and derives transaction filters and pagination in the client; usage summaries come from /api/v1/usage. Those additional dashboard filters are not REST query parameters.
 
 Create/PATCH require positive integer amountCents, description, a user-owned category and canonical UTC date. POST optionally accepts sourceId for idempotency. Mutation responses include the affected expense and budget snapshot. Category objects include IDs and names; clients must use the signed-in user's category list rather than hardcoded defaults.
 
 Old /api/expenses and the prototype's unversioned category-budget, recurring-plan and portability routes are absent. See the [README contract table](../README.md), [MCP specification](mcp-end-to-end.md), and [Hermes guide](hermes-agent.md) for full integration examples and error behavior.
+
+## Display timezone and usage
+
+`GET /api/v1/settings` returns `{ "settings": { "timezone": "Asia/Jakarta" } }` with no-store caching. `PUT` accepts `{ "timezone": "America/New_York" }` and returns the same shape. Valid named IANA zones and UTC are accepted; invalid values return 400 without changing the setting. Same-origin checks apply to browser writes; JWT and generated tokens use normal ownership checks. No userId field can select another user's settings.
+
+`GET /api/v1/usage?date=YYYY-MM-DD` returns `{ "usage": { "timezone", "date", "weekStartsOn": "monday", "day", "week", "month" } }`. Omit date for today in that timezone. Each period includes inclusive local `start`/`end`, integer `totalCents`, `transactionCount`, and category totals/counts/percentages. Week is Monday-Sunday, including across month/year boundaries. Invalid dates return 400; missing authentication returns 401. Forced-password-change restrictions remain in force.
+
+Expense GET and MCP list/summary responses identify the timezone; all date filtering follows it. Budget snapshots add timezone, weekCents, weekStart and weekEnd while retaining previous fields. Monthly limits now use the account's timezone month. PDF timestamps/filter bounds and HTML export timestamps use the same preference. UTC expense date/createdAt values remain unchanged.
+
+The display setting does not change expense-create/PATCH semantics: those still require UTC instants. Web date/time entry is explicitly device-local, with existing UTC conversion. Settings change no transaction dates or amounts.

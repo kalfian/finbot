@@ -1,6 +1,7 @@
+import { dateKeyInZone, DEFAULT_TIMEZONE } from "./timezone";
 import type { CalendarExpense } from "./expense-calendar";
 
-export type ReportFilter = { query: string; start: string; end: string };
+export type ReportFilter = { query: string; start: string; end: string; timezone?: string };
 
 export function validDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -13,19 +14,14 @@ export function validateReportRange(start: string, end: string): boolean {
 }
 
 export function jakartaDateKey(value: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Asia/Jakarta",
-  }).formatToParts(new Date(value));
-  const part = (type: string) => parts.find((item) => item.type === type)?.value;
-  return `${part("year")}-${part("month")}-${part("day")}`;
+  return dateKeyInZone(value, DEFAULT_TIMEZONE);
 }
 
 export function filterReportExpenses<T extends CalendarExpense>(expenses: readonly T[], filter: ReportFilter): T[] {
   if (!validateReportRange(filter.start, filter.end)) return [];
   const query = filter.query.trim().toLocaleLowerCase();
   return expenses.filter((expense) => {
-    const key = jakartaDateKey(expense.date);
+    const key = dateKeyInZone(expense.date, filter.timezone ?? DEFAULT_TIMEZONE);
     return (!filter.start || key >= filter.start) && (!filter.end || key <= filter.end)
       && (!query || expense.description.toLocaleLowerCase().includes(query) || expense.category.toLocaleLowerCase().includes(query));
   });

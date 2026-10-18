@@ -5,8 +5,6 @@ import { resolve } from "node:path";
 import type { CalendarExpense } from "./expense-calendar";
 import { filterReportExpenses, validateReportRange, type ReportFilter } from "./expense-filters";
 
-const dayFormatter = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
-const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Jakarta" });
 const amountFormatter = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
 const blue = "#1769aa";
 const ink = "#171a20";
@@ -82,7 +80,7 @@ function drawTextLines(document: PDFKit.PDFDocument, lines: TextLine[], x: numbe
 }
 
 function labelForDate(value: string): string {
-  return dayFormatter.format(new Date(`${value}T00:00:00.000Z`));
+  return new Intl.DateTimeFormat("en-GB", {day:"2-digit",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(`${value}T12:00:00.000Z`));
 }
 
 function periodLabel(start: string, end: string): string {
@@ -94,6 +92,10 @@ function amount(cents: number): string {
 }
 
 export function buildExpensePdf(expenses: readonly CalendarExpense[], filter: ReportFilter): Promise<Buffer> {
+  const timezone = filter.timezone ?? "Asia/Jakarta";
+  const dayFormatter = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: timezone });
+const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone });
+
   if (!validateReportRange(filter.start, filter.end)) throw new Error("Choose a valid date range.");
   const records = filterReportExpenses(expenses, filter).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
   const document = new PDFDocument({ size: "A4", layout: "landscape", margin: 38, bufferPages: true, info: { Title: "Expense Tracker - Expense report" } });
@@ -108,7 +110,7 @@ export function buildExpensePdf(expenses: readonly CalendarExpense[], filter: Re
   function tableHeader(y: number) {
     document.rect(38, y, width, 28).fill("#f7f8fa");
     document.fillColor(muted).font("Helvetica-Bold").fontSize(9);
-    document.text("NO.", 50, y + 9).text("DATE / UTC+7", 92, y + 9)
+    document.text("NO.", 50, y + 9).text("DATE / TIME", 92, y + 9)
       .text("CATEGORY", 234, y + 9).text("DESCRIPTION", 370, y + 9)
       .text("AMOUNT", 657, y + 9, { width: 134, align: "right" });
     return y + 28;
@@ -118,12 +120,12 @@ export function buildExpensePdf(expenses: readonly CalendarExpense[], filter: Re
     rule(bottom - 11);
     document.fillColor(muted).font("Helvetica").fontSize(8)
       .text("Expense Tracker / Expense report", 38, bottom)
-      .text(`UTC+7  |  IDR  |  ${period}`, 390, bottom, { width: 400, align: "right" });
+      .text(`${timezone}  |  IDR  |  ${period}`, 390, bottom, { width: 400, align: "right" });
   }
 
   document.fillColor(blue).font("Helvetica-Bold").fontSize(10).text("EXPENSE TRACKER / DAILY EXPENSES", 38, 38);
   document.fillColor(ink).fontSize(30).text("Expense report", 38, 61);
-  document.fillColor(muted).font("Helvetica").fontSize(10).text(`${period}  |  UTC+7  |  IDR`, 38, 103);
+  document.fillColor(muted).font("Helvetica").fontSize(10).text(`${period}  |  ${timezone}  |  IDR`, 38, 103);
   drawTextLines(document, layoutText(document, filter.query.trim() ? `Search: ${filter.query.trim()}` : "All descriptions and categories", width - 10, 10).slice(0, 2), 38, 120, 10);
   rule(147);
   const total = records.reduce((sum, record) => sum + record.amountCents, 0);

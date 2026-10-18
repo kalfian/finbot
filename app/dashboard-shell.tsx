@@ -2,6 +2,11 @@
 import { type ReactNode, useEffect, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/client-fetch";
 import { Icon } from "./components/ui-icon";
+import { PreferencesContext } from "./components/preferences";
+import { TimezoneSettings } from "./components/timezone-settings";
+import { DEFAULT_TIMEZONE } from "@/lib/timezone";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Modal } from "./components/modal";
 type Theme = "light" | "dark";
 function applyTheme(theme: Theme) {
@@ -16,10 +21,16 @@ function applyTheme(theme: Theme) {
 export default function DashboardShell({
   children,
   user,
+  initialTimezone = DEFAULT_TIMEZONE,
 }: {
   children: ReactNode;
+  initialTimezone?: string;
   user: { username: string; role: "admin" | "user" };
 }) {
+  const pathname = usePathname();
+  const [timezone, setTimezone] = useState(initialTimezone);
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [settingsTab, setSettingsTab] = useState("timezone");
   const [settings, setSettings] = useState(false);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -88,55 +99,100 @@ export default function DashboardShell({
     }
   }
   return (
-    <>
-      <a className="skip-link" href="#overview">
+    <PreferencesContext.Provider
+      value={{
+        timezone,
+        openSettings: () => {
+          setSettingsTab("timezone");
+          setSettings(true);
+        },
+      }}
+    >
+      <Link className="skip-link" href="/#overview">
         Skip to dashboard
-      </a>
+      </Link>
       <aside className="app-rail" aria-label="Main navigation">
-        <a className="app-name" href="#overview">
+        <Link className="app-name" href="/#overview">
           <span className="brand-mark">
             <Icon name="wallet" size={24} />
           </span>
           ledger<span className="brand-dot">.</span>
-        </a>
+        </Link>
         <span className="rail-caption">PERSONAL SPACE</span>
-        <nav className="rail-nav">
-          <a
-            href="#overview"
-            aria-current={section === "overview" ? "location" : undefined}
+        <button
+          type="button"
+          className="mobile-menu-toggle secondary-button"
+          aria-expanded={mobileMenu}
+          aria-controls="ledger-navigation"
+          onClick={() => setMobileMenu(!mobileMenu)}
+        >
+          <Icon name="list" />
+          Menu
+        </button>
+        <nav
+          id="ledger-navigation"
+          className={`rail-nav ${mobileMenu ? "is-open" : ""}`}
+          onClick={() => setMobileMenu(false)}
+        >
+          <Link
+            href="/#overview"
+            aria-current={
+              pathname === "/" && section === "overview"
+                ? "location"
+                : undefined
+            }
           >
             <Icon name="overview" />
             Overview
-          </a>
-          <a
-            href="#transactions"
-            aria-current={section === "transactions" ? "location" : undefined}
+          </Link>
+          <Link
+            href="/#transactions"
+            aria-current={
+              pathname === "/" && section === "transactions"
+                ? "location"
+                : undefined
+            }
           >
             <Icon name="list" />
             Transactions
-          </a>
-          <a href="/activity">
+          </Link>
+          <Link
+            href="/activity"
+            aria-current={pathname === "/activity" ? "page" : undefined}
+          >
             <Icon name="list" />
             Calendar &amp; reports
-          </a>
-          <a href="/integrations">
+          </Link>
+          <Link
+            href="/integrations"
+            aria-current={pathname === "/integrations" ? "page" : undefined}
+          >
             <Icon name="account" />
             Integrations
-          </a>
+          </Link>
           {user.role === "admin" && (
-            <a href="/users">
+            <Link
+              href="/users"
+              aria-current={pathname === "/users" ? "page" : undefined}
+            >
               <Icon name="account" />
               Users
-            </a>
+            </Link>
           )}
         </nav>
         <div className="rail-note">
-          <span className="note-line" />
-          <p>
-            A little more clarity.
-            <br />A lot more possibility.
-          </p>
-          <Icon name="arrow" size={26} />
+          <p className="eyebrow">YOUR TIME, YOUR TOTALS</p>
+          <button
+            type="button"
+            className="timezone-rail"
+            onClick={() => {
+              setSettingsTab("timezone");
+              setSettings(true);
+            }}
+          >
+            {timezone.replaceAll("_", " ")}
+            <span>Change timezone →</span>
+          </button>
         </div>
         <div className="rail-bottom">
           <button
@@ -152,7 +208,10 @@ export default function DashboardShell({
             className="rail-control account-button"
             type="button"
             aria-haspopup="dialog"
-            onClick={() => setSettings(true)}
+            onClick={() => {
+              setSettingsTab("password");
+              setSettings(true);
+            }}
           >
             <Icon name="account" />
             <span>Account</span>
@@ -171,48 +230,72 @@ export default function DashboardShell({
         <p className="muted">
           Signed in as {user.username}. Manage your account password.
         </p>
-        <form onSubmit={change} className="account-form">
-          <label>
-            Current password
-            <input
-              type="password"
-              autoComplete="current-password"
-              data-autofocus
-              value={current}
-              onChange={(event) => setCurrent(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            New password
-            <input
-              type="password"
-              autoComplete="new-password"
-              minLength={8}
-              value={next}
-              onChange={(event) => setNext(event.target.value)}
-              required
-            />
-            <small>8-128 characters, including a letter and a number.</small>
-          </label>
-          {notice && (
-            <p className="form-message error" role="alert">
-              {notice}
-            </p>
-          )}
-          <button disabled={busy}>
-            {busy ? "Working..." : "Update password"}
+        <div className="settings-tabs" aria-label="Account settings">
+          <button
+            type="button"
+            aria-pressed={settingsTab === "timezone"}
+            onClick={() => setSettingsTab("timezone")}
+          >
+            Timezone
           </button>
-        </form>
-        <button
-          type="button"
-          className="text-button delete-button logout-button"
-          disabled={busy}
-          onClick={() => void logout()}
-        >
-          Log out
-        </button>
+          <button
+            type="button"
+            aria-pressed={settingsTab === "password"}
+            onClick={() => setSettingsTab("password")}
+          >
+            Security
+          </button>
+        </div>
+        {settingsTab === "timezone" ? (
+          <TimezoneSettings initialTimezone={timezone} onSaved={setTimezone} />
+        ) : (
+          <>
+            <form onSubmit={change} className="account-form">
+              <label>
+                Current password
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  data-autofocus
+                  value={current}
+                  onChange={(event) => setCurrent(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                New password
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={next}
+                  onChange={(event) => setNext(event.target.value)}
+                  required
+                />
+                <small>
+                  8-128 characters, including a letter and a number.
+                </small>
+              </label>
+              {notice && (
+                <p className="form-message error" role="alert">
+                  {notice}
+                </p>
+              )}
+              <button disabled={busy}>
+                {busy ? "Working..." : "Update password"}
+              </button>
+            </form>
+            <button
+              type="button"
+              className="text-button delete-button logout-button"
+              disabled={busy}
+              onClick={() => void logout()}
+            >
+              Log out
+            </button>
+          </>
+        )}
       </Modal>
-    </>
+    </PreferencesContext.Provider>
   );
 }

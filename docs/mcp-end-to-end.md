@@ -71,7 +71,7 @@ Tool results that contain normal structured data return it as JSON inside `resul
 | `expense_summary` | Summarize filtered expenses by category | optional `query`, `from`, `to` |
 | `export_report_pdf` | Generate a filtered PDF report | optional `query`, `from`, `to` |
 
-Dates in filters use inclusive Asia/Jakarta calendar boundaries. Category names are case-insensitively unique per user. A category cannot be deleted while an expense still uses it.
+Dates in filters use inclusive calendar boundaries in the account timezone (Asia/Jakarta by default). Category names are case-insensitively unique per user. A category cannot be deleted while an expense still uses it.
 
 ### REST-to-MCP Coverage Audit
 
@@ -208,3 +208,11 @@ Before replying “saved” or “updated”, verify all applicable items:
 - Returned budget totals, not guessed totals, are used in the reply.
 - For a receipt, proof upload succeeded before claiming it is attached.
 - `sourceId` was supplied by the adapter or omitted; the user was never asked for it.
+
+## Timezone and usage tools
+
+- get_settings: no input; returns settings.timezone.
+- set_timezone: timezone (IANA name or UTC); changes only the authenticated user's display/grouping preference. Invoke for a user-requested settings change. Invalid values return INVALID_TIMEZONE and leave the preference intact.
+- usage_summary: optional date (YYYY-MM-DD); defaults to today in the account timezone. Returns usage.timezone, date, weekStartsOn=monday, and day/week/month objects with inclusive local start/end, totalCents, transactionCount and categories. Invalid dates return INVALID_USAGE_DATE.
+- list_expenses and expense_summary use the saved timezone for date bounds and return timezone metadata. budget_status and post-mutation budgets add timezone, weekCents, weekStart and weekEnd. export_report_pdf uses it for filtering and timestamp labels.
+- UTC expense timestamps, idempotency and ownership are unchanged. DST local days are not assumed to last 24 hours.
