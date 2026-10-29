@@ -15,12 +15,15 @@ export async function GET(request: Request): Promise<Response> {
   const start = searchParams.get("from") ?? "";
   const end = searchParams.get("to") ?? "";
   const query = searchParams.get("q") ?? "";
+  const tag = searchParams.get("tag") ?? "";
+  const untagged = searchParams.get("untagged") === "true";
   if (!validateReportRange(start, end)) return Response.json({ error: "Choose a valid date range." }, { status: 400 });
-  const pdf = await buildExpensePdf(createExpenseRepository(database, auth.user.id).list(), { query, start, end, timezone: getUserSettings(database, auth.user.id).timezone });
+  const tagSlug = tag.replace(/^#+/, "").trim().replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  const pdf = await buildExpensePdf(createExpenseRepository(database, auth.user.id).list(), { query, start, end, tag, untagged, timezone: getUserSettings(database, auth.user.id).timezone });
   return new Response(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="expense-tracker_${start || "all"}_${end || "all"}.pdf"`,
+      "Content-Disposition": `attachment; filename="expense-tracker_${tagSlug ? `${tagSlug}_` : ""}${start || "all"}_${end || "all"}.pdf"`,
       "Cache-Control": "no-store",
     },
   });

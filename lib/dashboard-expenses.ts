@@ -1,5 +1,6 @@
 import { dateKeyInZone, DEFAULT_TIMEZONE } from "./timezone";
 import type { Expense } from "./expenses";
+import { matchesTagFilter } from "./expense-filters";
 
 export type CategorySummary = {
   category: string;
@@ -16,6 +17,8 @@ export function queryDashboardExpenses(
 ) {
   const search = (params.get("search") ?? "").toLocaleLowerCase();
   const category = params.get("category");
+  const tag = params.get("tag") ?? "";
+  const untagged = params.get("untagged") === "true";
   const start = params.get("start");
   const end = params.get("end");
   const from = params.get("from");
@@ -25,10 +28,11 @@ export function queryDashboardExpenses(
   const matches = records.filter(
     (item) =>
       (!search ||
-        `${item.description} ${item.category}`
+        `${item.description} ${item.category} ${item.tags?.join(" ") ?? ""}`
           .toLocaleLowerCase()
           .includes(search)) &&
       (!category || item.category === category) &&
+      matchesTagFilter(item.tags, tag, untagged) &&
       (!from || dateKeyInZone(item.date,timezone) >= from) &&
       (!to || dateKeyInZone(item.date,timezone) <= to) &&
       (!start || Date.parse(item.date) >= Date.parse(start)) &&

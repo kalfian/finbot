@@ -12,6 +12,7 @@ const records: Expense[] = [
     date: "2026-10-18T05:00:00.000Z",
     createdAt: "",
     proofCount: 1,
+    tags: ["Liburan Bali"],
   },
   {
     id: 2,
@@ -21,6 +22,7 @@ const records: Expense[] = [
     date: "2026-10-17T17:00:00.000Z",
     createdAt: "",
     proofCount: 0,
+    tags: [],
   },
   {
     id: 3,
@@ -30,6 +32,7 @@ const records: Expense[] = [
     date: "2026-10-18T17:00:00.000Z",
     createdAt: "",
     proofCount: 0,
+    tags: [],
   },
 ];
 test("dashboard aggregates complete results before slicing and preserves fractional IDR", () => {

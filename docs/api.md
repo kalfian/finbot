@@ -12,15 +12,18 @@ All financial endpoints require a login cookie or Bearer credential. Browser mut
 | List/attach proofs | GET/POST /api/v1/expenses/:id/proofs |
 | Read proof bytes | GET /api/v1/expenses/:id/proofs/:proofId |
 | Categories | GET/POST /api/v1/categories; PATCH/DELETE /api/v1/categories/:id |
+| Tags | GET/POST /api/v1/tags; PATCH/DELETE /api/v1/tags/:id |
 | Budget status/limit | GET/PUT /api/v1/budget |
 | Filtered PDF | GET /api/v1/reports/pdf |
 | Integration tokens | /api/tokens |
 | Administrator user management | /api/users |
 | Streamable HTTP MCP | /mcp |
 
-Expense GET accepts q, from and to; dates use inclusive calendar days in the authenticated user's saved timezone. The new dashboard reads the full user-owned snapshot and derives transaction filters and pagination in the client; usage summaries come from /api/v1/usage. Those additional dashboard filters are not REST query parameters.
+Expense GET and the PDF report accept q, from, to, tag and untagged; q also matches tag names, tag selects one exact tag case-insensitively and untagged=true keeps expenses without tags. Dates use inclusive calendar days in the authenticated user's saved timezone. The new dashboard reads the full user-owned snapshot and derives transaction filters and pagination in the client; usage summaries come from /api/v1/usage. Those additional dashboard filters are not REST query parameters.
 
-Create/PATCH require positive integer amountCents, description, a user-owned category and canonical UTC date. POST optionally accepts sourceId for idempotency. Mutation responses include the affected expense and budget snapshot. Category objects include IDs and names; clients must use the signed-in user's category list rather than hardcoded defaults.
+Create/PATCH require positive integer amountCents, description, a user-owned category and canonical UTC date. POST optionally accepts sourceId for idempotency. Both accept optional tags (array of names, at most 10; each 1-40 characters without commas, leading # stripped); unknown names are created. PATCH without tags keeps the current tags and [] clears them. Every Expense includes a sorted tags array.
+
+GET /api/v1/tags returns { "tags": [{ id, name, createdAt, expenseCount, totalCents }] }; totals cover all dates. POST and PATCH take { "name" } and return 409 for a case-insensitive duplicate. DELETE removes the tag from every expense and keeps the expenses. Mutation responses include the affected expense and budget snapshot. Category objects include IDs and names; clients must use the signed-in user's category list rather than hardcoded defaults.
 
 Old /api/expenses and the prototype's unversioned category-budget, recurring-plan and portability routes are absent. See the [README contract table](../README.md), [MCP specification](mcp-end-to-end.md), and [Hermes guide](hermes-agent.md) for full integration examples and error behavior.
 

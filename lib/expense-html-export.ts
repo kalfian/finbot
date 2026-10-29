@@ -2,7 +2,7 @@ import { formatExpenseDate } from "./date-time";
 import { EXPENSE_RECORDER_DESIGN_CSS } from "./expense-recorder-design";
 import { formatCurrency } from "./money";
 
-export type HtmlExportExpense = { id: number; amountCents: number; description: string; category: string; date: string };
+export type HtmlExportExpense = { id: number; amountCents: number; description: string; category: string; date: string; tags?: readonly string[] };
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] as string);
@@ -16,7 +16,7 @@ function displayDate(date: string, timezone?: string): string {
 export function createExpenseHtmlExport(expenses: readonly HtmlExportExpense[], filterSummary = "No filters active", timezone?: string): string {
   const totalCents = expenses.reduce((total, expense) => total + expense.amountCents, 0);
   const rows = expenses.length
-    ? expenses.map((expense) => `<li><div><strong>${escapeHtml(expense.description)}</strong><span>${escapeHtml(expense.category)} &middot; ${escapeHtml(displayDate(expense.date, timezone))}</span></div><b>${escapeHtml(formatCurrency(expense.amountCents))}</b></li>`).join("")
+    ? expenses.map((expense) => `<li><div><strong>${escapeHtml(expense.description)}</strong><span>${escapeHtml(expense.category)} &middot; ${escapeHtml(displayDate(expense.date, timezone))}</span>${expense.tags?.length ? `<span>Tags: ${expense.tags.map((tag) => escapeHtml(`#${tag}`)).join(", ")}</span>` : ""}</div><b>${escapeHtml(formatCurrency(expense.amountCents))}</b></li>`).join("")
     : "<li class=\"empty\">No expenses match these filters.</li>";
 
   return `<!doctype html>

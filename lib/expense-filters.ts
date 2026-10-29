@@ -1,7 +1,14 @@
 import { dateKeyInZone, DEFAULT_TIMEZONE } from "./timezone";
 import type { CalendarExpense } from "./expense-calendar";
 
-export type ReportFilter = { query: string; start: string; end: string; timezone?: string };
+/** tag matches one tag name case-insensitively; untagged keeps only expenses without any tag. */
+export type ReportFilter = { query: string; start: string; end: string; timezone?: string; tag?: string; untagged?: boolean };
+
+export function matchesTagFilter(tags: readonly string[] | undefined, tag = "", untagged = false): boolean {
+  if (untagged && tags?.length) return false;
+  const wanted = tag.trim().replace(/^#+/, "").toLocaleLowerCase();
+  return !wanted || !!tags?.some((name) => name.toLocaleLowerCase() === wanted);
+}
 
 export function validDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -23,6 +30,8 @@ export function filterReportExpenses<T extends CalendarExpense>(expenses: readon
   return expenses.filter((expense) => {
     const key = dateKeyInZone(expense.date, filter.timezone ?? DEFAULT_TIMEZONE);
     return (!filter.start || key >= filter.start) && (!filter.end || key <= filter.end)
-      && (!query || expense.description.toLocaleLowerCase().includes(query) || expense.category.toLocaleLowerCase().includes(query));
+      && matchesTagFilter(expense.tags, filter.tag, filter.untagged)
+      && (!query || expense.description.toLocaleLowerCase().includes(query) || expense.category.toLocaleLowerCase().includes(query)
+        || !!expense.tags?.some((name) => name.toLocaleLowerCase().includes(query)));
   });
 }

@@ -27,7 +27,7 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     const init = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
     assert.equal(init.result.serverInfo.name, "expense-tracker");
     const tools = await call("tools/list", {});
-    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense"].sort());
+    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense", "list_tags", "tag_expenses", "rename_tag", "delete_tag"].sort());
     const createdCategory = await call("tools/call", { name: "create_category", arguments: { name: "Travel" } });
     const categoryId = JSON.parse(createdCategory.result.content[0].text).category.id;
     const renamedCategory = await call("tools/call", { name: "update_category", arguments: { categoryId, name: "Transit" } });

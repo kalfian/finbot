@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./legacy-surface.css";
 import "./globals.css";
 import "./refinement.css";
+import "./tags.css";
 import { EXPENSE_RECORDER_DESIGN_CSS } from "@/lib/expense-recorder-design";
 
 export const metadata: Metadata = {

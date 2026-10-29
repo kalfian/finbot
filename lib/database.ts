@@ -67,6 +67,7 @@ export function initializeDatabase(database = openDatabase()): void {
   createExpenseSources(database);
   createProofsTable(database);
   createExpenseCategories(database);
+  createTagTables(database);
   createAppSecretsTable(database);
   createSessionsTable(database);
   createIndexes(database);
@@ -98,6 +99,24 @@ function createExpenseCategories(database: Database.Database): void {
     SELECT DISTINCT user_id, TRIM(category), datetime('now')
     FROM expenses
     WHERE TRIM(category) <> '';
+  `);
+}
+
+function createTagTables(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS tags (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      name TEXT NOT NULL COLLATE NOCASE,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tags_user_name ON tags(user_id, name COLLATE NOCASE);
+    CREATE TABLE IF NOT EXISTS expense_tags (
+      expense_id INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+      tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY (expense_id, tag_id)
+    );
+    CREATE INDEX IF NOT EXISTS expense_tags_tag_id ON expense_tags(tag_id);
   `);
 }
 

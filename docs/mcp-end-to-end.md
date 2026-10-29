@@ -59,19 +59,25 @@ Tool results that contain normal structured data return it as JSON inside `resul
 | `create_category` | Create a category | `name` |
 | `update_category` | Rename a category and its existing expenses | `categoryId`, `name` |
 | `delete_category` | Delete an unused category | `categoryId`, `confirm: true` |
-| `list_expenses` | List/search expenses | optional `query`, `from`, `to` |
-| `create_expense` | Record an expense | `amountCents`, `description`, `category`, `date`; optional `sourceId` |
-| `update_expense` | Replace editable expense fields | `expenseId`, `amountCents`, `description`, `category`, `date` |
+| `list_expenses` | List/search expenses | optional `query`, `from`, `to`, `tag`, `untagged` |
+| `create_expense` | Record an expense | `amountCents`, `description`, `category`, `date`; optional `tags`, `sourceId` |
+| `update_expense` | Replace editable expense fields | `expenseId`, `amountCents`, `description`, `category`, `date`; optional `tags` (omit to keep) |
 | `delete_expense` | Permanently delete an expense and proofs | `expenseId`, `confirm: true` |
 | `list_expense_proofs` | List proof metadata | `expenseId` |
 | `attach_expense_proof` | Attach JPEG, PNG, WebP, or PDF bytes | `expenseId`, `filename`, `mimeType`, `base64`; optional `sourceId` |
 | `get_expense_proof` | Read one proof | `expenseId`, `proofId` |
 | `budget_status` | Read daily/monthly totals and recurring limit | optional `date` (`YYYY-MM-DD`) |
 | `set_monthly_limit` | Set or clear recurring monthly limit | positive `monthlyLimitCents` or `null` |
-| `expense_summary` | Summarize filtered expenses by category | optional `query`, `from`, `to` |
-| `export_report_pdf` | Generate a filtered PDF report | optional `query`, `from`, `to` |
+| `expense_summary` | Summarize filtered expenses by category and day | optional `query`, `from`, `to`, `tag`, `untagged` |
+| `export_report_pdf` | Generate a filtered PDF report | optional `query`, `from`, `to`, `tag`, `untagged` |
+| `list_tags` | List tags with expense count and all-time total | none |
+| `tag_expenses` | Add or remove one tag on several expenses | `tag`, `expenseIds`; optional `action` (`add` default, `remove`) |
+| `rename_tag` | Rename a tag everywhere | `tagId`, `name` |
+| `delete_tag` | Remove a tag from every expense, keeping the expenses | `tagId`, `confirm: true` |
 
 Dates in filters use inclusive calendar boundaries in the account timezone (Asia/Jakarta by default). Category names are case-insensitively unique per user. A category cannot be deleted while an expense still uses it.
+
+Tags are optional free-form labels (for example a trip, `Liburan Bali`) that sit beside the single category. An expense has at most 10 tags; names are 1-40 characters without commas, a leading `#` is stripped, and spelling is reused case-insensitively. Unknown tag names are created on write. `tag` filters match one exact tag name case-insensitively; `untagged: true` keeps expenses with no tag.
 
 ### REST-to-MCP Coverage Audit
 
@@ -84,6 +90,9 @@ Dates in filters use inclusive calendar boundaries in the account timezone (Asia
 | `GET/PUT /api/v1/budget` | `budget_status`, `set_monthly_limit` | complete |
 | `GET/POST /api/v1/categories` | `list_categories`, `create_category` | complete |
 | `PATCH/DELETE /api/v1/categories/:id` | `update_category`, `delete_category` | complete |
+| `GET/POST /api/v1/tags` | `list_tags`; tags are also created by expense writes | complete |
+| `PATCH/DELETE /api/v1/tags/:id` | `rename_tag`, `delete_tag` | complete |
+| bulk add/remove one tag | `tag_expenses` | MCP-only convenience tool |
 | `GET /api/v1/reports/pdf` | `export_report_pdf` | complete |
 | filtered aggregate report | `expense_summary` | MCP-only convenience tool |
 
@@ -169,6 +178,14 @@ Deletion is permanent and also removes attached proofs.
 - Deletion requires confirmation and fails with `CATEGORY_IN_USE` while expenses reference it.
 - To remove an in-use category, first update or delete every affected expense.
 
+### Tags and trips
+
+- Add a tag only when the user names one ("tag liburan bali", "ini buat liburan") or asks to tag a set of expenses. Never infer a trip tag from dates alone.
+- Call `list_tags` first and reuse an existing spelling.
+- To tag past expenses, call `list_expenses` for the dates the user gives, show the matches, then call `tag_expenses` with the confirmed IDs.
+- To answer "how much did the holiday cost", call `expense_summary` with `tag`; it returns `totalCents`, `categories` and `days`. Use `export_report_pdf` with the same `tag` for a document.
+- `update_expense` without `tags` keeps the current tags; pass `tags: []` only when the user wants them cleared.
+
 ## 9. Idempotency and Retries
 
 - Repeating `create_expense` with the same `sourceId` and identical fields returns the original expense with `replayed: true`.
@@ -194,6 +211,7 @@ Common codes:
 - `DELETE_CONFIRMATION_REQUIRED`: ask for explicit confirmation.
 - `CATEGORY_NAME_CONFLICT`: choose another category name.
 - `CATEGORY_IN_USE`: move/delete associated expenses first.
+- `INVALID_TAG` / `TAG_NAME_CONFLICT` / `TAG_NOT_FOUND`: fix the tag name, choose another name, or refresh with `list_tags`.
 - `PROOF_REJECTED`: verify ownership, MIME type, file signature, 5 MiB limit, and three-proof limit.
 
 ## 11. Completion Checklist

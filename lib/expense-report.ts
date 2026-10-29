@@ -126,7 +126,12 @@ const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute
   document.fillColor(blue).font("Helvetica-Bold").fontSize(10).text("EXPENSE TRACKER / DAILY EXPENSES", 38, 38);
   document.fillColor(ink).fontSize(30).text("Expense report", 38, 61);
   document.fillColor(muted).font("Helvetica").fontSize(10).text(`${period}  |  ${timezone}  |  IDR`, 38, 103);
-  drawTextLines(document, layoutText(document, filter.query.trim() ? `Search: ${filter.query.trim()}` : "All descriptions and categories", width - 10, 10).slice(0, 2), 38, 120, 10);
+  const scope = [
+    filter.tag?.trim() && `Tag: #${filter.tag.trim().replace(/^#+/, "")}`,
+    filter.untagged && "Untagged only",
+    filter.query.trim() && `Search: ${filter.query.trim()}`,
+  ].filter(Boolean).join("  |  ");
+  drawTextLines(document, layoutText(document, scope || "All descriptions and categories", width - 10, 10).slice(0, 2), 38, 120, 10);
   rule(147);
   const total = records.reduce((sum, record) => sum + record.amountCents, 0);
   const metrics = [
@@ -162,6 +167,11 @@ const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute
         document.fillColor(muted).font("Helvetica").fontSize(8)
           .text(/^\d{4}-\d{2}-\d{2}$/.test(record.date) ? "00:00" : timeFormatter.format(new Date(record.date)), 92, y + 24);
         document.fillColor(blue).font("Helvetica-Bold").fontSize(9).text(record.category, 234, y + 11, { width: 122 });
+        // Tags sit under a single-line category; a wrapped category keeps the row height unchanged.
+        if (record.tags?.length && document.heightOfString(record.category, { width: 122 }) < 14) {
+          document.fillColor(muted);
+          drawTextLines(document, layoutText(document, record.tags.map((tag) => `#${tag}`).join(" "), 122, 8).slice(0, 1), 234, y + 25, 8);
+        }
         document.fillColor(ink).font("Helvetica-Bold").fontSize(10)
           .text(amount(record.amountCents), 657, y + 11, { width: 134, align: "right" });
       }

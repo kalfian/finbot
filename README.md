@@ -95,9 +95,10 @@ Start here:
 | Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
 | Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
 | List and manage categories | `/api/v1/categories` | `list_categories`, `create_category`, `update_category`, `delete_category` |
+| List and manage tags | `/api/v1/tags` | `list_tags`, `tag_expenses`, `rename_tag`, `delete_tag` |
 | Category summary and PDF tool | — | `expense_summary`, `export_report_pdf` |
 
-The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes `timezone`, local `date`/`month`, `todayCents`, `weekCents`, `weekStart`, `weekEnd`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
+The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Both accept optional `tags`; update without `tags` keeps the current ones. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes `timezone`, local `date`/`month`, `todayCents`, `weekCents`, `weekStart`, `weekEnd`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
 
 For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 

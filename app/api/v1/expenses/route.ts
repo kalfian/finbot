@@ -17,8 +17,10 @@ export function GET(request: Request): Response {
   const query = searchParams.get("q") ?? "";
   const start = searchParams.get("from") ?? "";
   const end = searchParams.get("to") ?? "";
+  const tag = searchParams.get("tag") ?? "";
+  const untagged = searchParams.get("untagged") === "true";
   if (!validateReportRange(start, end)) return Response.json({ error: "Choose a valid date range." }, { status: 400 });
-  return Response.json({ timezone: getUserSettings(database,auth.user.id).timezone, expenses: filterReportExpenses(createExpenseRepository(database, auth.user.id).list(), { query, start, end, timezone: getUserSettings(database, auth.user.id).timezone }) }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json({ timezone: getUserSettings(database,auth.user.id).timezone, expenses: filterReportExpenses(createExpenseRepository(database, auth.user.id).list(), { query, start, end, tag, untagged, timezone: getUserSettings(database, auth.user.id).timezone }) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request): Promise<Response> {

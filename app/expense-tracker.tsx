@@ -4,7 +4,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { formatExpenseDate } from "@/lib/date-time";
 import type { Expense } from "@/lib/expenses";
 import ProofControls from "./proof-controls";
-import { queryDashboardExpenses } from "@/lib/dashboard-expenses";
+import {
+  queryDashboardExpenses,
+  type CategorySummary,
+} from "@/lib/dashboard-expenses";
 import {
   getBrowserLocalDateTime,
   saveExpense,
@@ -17,6 +20,12 @@ import { dateKeyInZone, type UsageSnapshot } from "@/lib/timezone";
 import { Icon, categoryIcon } from "./components/ui-icon";
 import { Modal } from "./components/modal";
 import { apiFetch } from "@/lib/client-fetch";
+import {
+  TagInput,
+  TagList,
+  fetchTagNames,
+  type TagInputHandle,
+} from "./components/tag-input";
 
 type CategoriesResult = { categories: { name: string }[] };
 type Filters = {
@@ -26,8 +35,24 @@ type Filters = {
   to: string;
   minAmount: string;
   maxAmount: string;
+  tag: string;
+  /** "true" keeps only expenses without tags; a string so active-filter counting stays uniform. */
+  untagged: string;
+};
+type TagSummary = {
+  tag: string;
+  totalCents: number;
+  count: number;
+  first: string;
+  last: string;
+  days: number;
+  categories: CategorySummary[];
+  daily: { day: string; totalCents: number; count: number }[];
 };
 const PAGE_SIZE = 8;
+const VISIBLE_DAYS = 7;
+/** Tag names cannot contain commas, so this select value can never collide with a real tag. */
+const UNTAGGED = ",untagged";
 const EMPTY_FILTERS: Filters = {
   search: "",
   category: "",
@@ -35,6 +60,8 @@ const EMPTY_FILTERS: Filters = {
   to: "",
   minAmount: "",
   maxAmount: "",
+  tag: "",
+  untagged: "",
 };
 const apiMessage = (body: unknown, fallback: string) =>
   body &&
@@ -55,6 +82,8 @@ function filterQuery(filters: Filters, limit: number, offset = 0) {
   if (filters.to) params.set("to", filters.to);
   if (filters.search.trim()) params.set("search", filters.search.trim());
   if (filters.category) params.set("category", filters.category);
+  if (filters.tag) params.set("tag", filters.tag);
+  if (filters.untagged) params.set("untagged", "true");
   const min = amountFilter(filters.minAmount);
   const max = amountFilter(filters.maxAmount);
   if (min !== undefined && min !== null)
@@ -70,12 +99,71 @@ function filterSummary(filters: Filters) {
   const parts = [
     filters.search.trim() && `Search: ${filters.search.trim()}`,
     filters.category && `Category: ${filters.category}`,
+    filters.tag && `Tag: #${filters.tag}`,
+    filters.untagged && "Tag: none",
     filters.from && `From: ${filters.from}`,
     filters.to && `To: ${filters.to}`,
     filters.minAmount && `Min: Rp${filters.minAmount}`,
     filters.maxAmount && `Max: Rp${filters.maxAmount}`,
   ].filter(Boolean);
   return parts.length ? parts.join("; ") : "No filters active";
+}
+
+const dayFormat = (key: string, options: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat("en", { ...options, timeZone: "UTC" }).format(
+    new Date(`${key}T12:00:00Z`),
+  );
+
+function spanLabel(first: string, last: string) {
+  const full = { day: "numeric", month: "short", year: "numeric" } as const;
+  if (first === last) return dayFormat(first, full);
+  const sameYear = first.slice(0, 4) === last.slice(0, 4);
+  return `${dayFormat(first, sameYear ? { day: "numeric", month: "short" } : full)} – ${dayFormat(last, full)}`;
+}
+
+/** Summarizes every expense matching the filters (not just the visible page) for one tag. */
+function summarizeTag(
+  records: readonly Expense[],
+  filters: Filters,
+  timezone: string,
+): TagSummary | undefined {
+  const result = queryDashboardExpenses(
+    records,
+    filterQuery(filters, Number.MAX_SAFE_INTEGER),
+    timezone,
+  );
+  if (!result.totalCount) return undefined;
+  const byDay = new Map<string, { totalCents: number; count: number }>();
+  for (const expense of result.expenses) {
+    const key = dateKeyInZone(expense.date, timezone);
+    const day = byDay.get(key) ?? { totalCents: 0, count: 0 };
+    day.totalCents += expense.amountCents;
+    day.count += 1;
+    byDay.set(key, day);
+  }
+  const daily = [...byDay]
+    .map(([day, value]) => ({ day, ...value }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+  const first = daily[0].day;
+  const last = daily[daily.length - 1].day;
+  const wanted = filters.tag.toLocaleLowerCase();
+  return {
+    tag:
+      result.expenses[0].tags?.find(
+        (name) => name.toLocaleLowerCase() === wanted,
+      ) ?? filters.tag,
+    totalCents: result.summary.totalCents,
+    count: result.totalCount,
+    first,
+    last,
+    days:
+      Math.round(
+        (Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) /
+          86_400_000,
+      ) + 1,
+    categories: result.insights.categories,
+    daily,
+  };
 }
 
 export default function ExpenseTracker() {
@@ -109,6 +197,16 @@ export default function ExpenseTracker() {
   const [saving, setSaving] = useState(false);
   const [composer, setComposer] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagNames, setTagNames] = useState<string[]>([]);
+  const [tagSummary, setTagSummary] = useState<TagSummary>();
+  const [showAllDays, setShowAllDays] = useState(false);
+  const [tagPdfState, setTagPdfState] = useState<"idle" | "loading" | "error">(
+    "idle",
+  );
+  const tagInput = useRef<TagInputHandle>(null);
+  const summaryHeading = useRef<HTMLHeadingElement>(null);
+  const focusSummary = useRef(false);
   const categories = customCategories;
   const load = useCallback(async () => {
     const request = ++loadSequence.current;
@@ -148,6 +246,9 @@ export default function ExpenseTracker() {
       }
       setItems(recentData.expenses);
       setTotalCount(recentData.totalCount);
+      setTagSummary(
+        filters.tag ? summarizeTag(records, filters, timezone) : undefined,
+      );
       setUsage(usageBody.usage);
       setHasSummary(true);
     } catch (caught) {
@@ -219,6 +320,21 @@ export default function ExpenseTracker() {
       }
     })();
   }, []);
+  const loadTags = useCallback(async () => {
+    try {
+      setTagNames((await fetchTagNames(apiFetch)).map((tag) => tag.name));
+    } catch {
+      // Suggestions are optional; tagging and filtering by row chips keep working.
+    }
+  }, []);
+  useEffect(() => {
+    void loadTags();
+  }, [loadTags]);
+  useEffect(() => {
+    if (!focusSummary.current || !tagSummary) return;
+    focusSummary.current = false;
+    summaryHeading.current?.focus();
+  }, [tagSummary]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       setDate(getBrowserLocalDateTime());
@@ -230,6 +346,7 @@ export default function ExpenseTracker() {
     setDescription("");
     setCategory(categories[0] ?? "");
     setDate(getBrowserLocalDateTime());
+    setTags([]);
     setEditing(undefined);
   }
   async function submit(event: FormEvent) {
@@ -245,25 +362,29 @@ export default function ExpenseTracker() {
       setError(valid.error);
       return;
     }
+    const finalTags = tagInput.current ? tagInput.current.commit() : tags;
+    if (!finalTags) return;
+    // Always send tags so an emptied list clears them on update.
+    const expense = { ...valid.value, tags: finalTags };
     setSaving(true);
     try {
       if (editing) {
         const response = await apiFetch(`/api/v1/expenses/${editing.id}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(valid.value),
+          body: JSON.stringify(expense),
         });
         const body: unknown = await response.json();
         if (!response.ok)
           throw Error(apiMessage(body, "We couldn't update this expense."));
         setNotice("Expense updated.");
       } else {
-        await saveExpense(valid.value, apiFetch);
+        await saveExpense(expense, apiFetch);
         setNotice("Expense added.");
       }
       resetForm();
       setComposer(false);
-      await load();
+      await Promise.all([load(), loadTags()]);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -320,6 +441,7 @@ export default function ExpenseTracker() {
     setDescription(expense.description);
     setCategory(expense.category);
     setDate(getBrowserLocalDateTime(new Date(expense.date)));
+    setTags(expense.tags ?? []);
     setNotice("");
     setError("");
     setComposer(true);
@@ -341,7 +463,7 @@ export default function ExpenseTracker() {
       setDeleting(undefined);
       setUndo(expense.proofCount ? undefined : expense);
       setNotice("Expense deleted.");
-      await load();
+      await Promise.all([load(), loadTags()]);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -363,12 +485,13 @@ export default function ExpenseTracker() {
           description: undo.description,
           category: undo.category,
           date: undo.date,
+          tags: undo.tags ?? [],
         },
         apiFetch,
       );
       setUndo(undefined);
       setNotice("Expense restored.");
-      await load();
+      await Promise.all([load(), loadTags()]);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -433,10 +556,44 @@ export default function ExpenseTracker() {
       setExporting(false);
     }
   }
+  async function downloadTagPdf(tag: string) {
+    setTagPdfState("loading");
+    // The PDF endpoint supports tag, date range and search; category and amount stay on screen only.
+    const params = new URLSearchParams({ tag });
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.search.trim()) params.set("q", filters.search.trim());
+    try {
+      const response = await apiFetch(`/api/v1/reports/pdf?${params}`);
+      if (!response.ok) throw Error();
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `expenses_${tag.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "tag"}.pdf`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTagPdfState("idle");
+    } catch {
+      setTagPdfState("error");
+    }
+  }
   const updateFilter = (field: keyof Filters, value: string) => {
     setPage(0);
     setFilters((current) => ({ ...current, [field]: value }));
   };
+  function setTagFilter(value: string, moveFocus = false) {
+    setPage(0);
+    setShowAllDays(false);
+    setTagPdfState("idle");
+    focusSummary.current = moveFocus && value !== UNTAGGED && value !== "";
+    setFilters((current) => ({
+      ...current,
+      tag: value === UNTAGGED ? "" : value,
+      untagged: value === UNTAGGED ? "true" : "",
+    }));
+  }
   function openComposer() {
     resetForm();
     setError("");
@@ -463,6 +620,21 @@ export default function ExpenseTracker() {
     .slice(4)
     .reduce((sum, item) => sum + item.totalCents, 0);
   const activeFilters = Object.values(filters).filter(Boolean).length;
+  const tagOptions =
+    filters.tag &&
+    !tagNames.some(
+      (name) => name.toLocaleLowerCase() === filters.tag.toLocaleLowerCase(),
+    )
+      ? [...tagNames, filters.tag]
+      : tagNames;
+  const pdfOmitsFilters = Boolean(
+    filters.category || filters.minAmount || filters.maxAmount,
+  );
+  const otherFilters = activeFilters - (filters.tag ? 1 : 0);
+  const busiestDay = Math.max(
+    1,
+    ...(tagSummary?.daily.map((day) => day.totalCents) ?? []),
+  );
   return (
     <main className="ledger-workspace" id="overview" tabIndex={-1}>
       <div className="workspace-topline">
@@ -677,7 +849,9 @@ export default function ExpenseTracker() {
         </div>
         <div className="transaction-toolbar">
           <label className="search-field" htmlFor="expense-search">
-            <span className="sr-only">Search descriptions</span>
+            <span className="sr-only">
+              Search descriptions, categories and tags
+            </span>
             <Icon name="search" size={18} />
             <input
               id="expense-search"
@@ -699,6 +873,22 @@ export default function ExpenseTracker() {
               {categories.map((value) => (
                 <option key={value} value={value}>
                   {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label htmlFor="filter-tag">
+            <span className="sr-only">Tag</span>
+            <select
+              id="filter-tag"
+              value={filters.untagged ? UNTAGGED : filters.tag}
+              onChange={(event) => setTagFilter(event.target.value)}
+            >
+              <option value="">All tags</option>
+              <option value={UNTAGGED}>No tag</option>
+              {tagOptions.map((name) => (
+                <option key={name} value={name}>
+                  #{name}
                 </option>
               ))}
             </select>
@@ -774,6 +964,153 @@ export default function ExpenseTracker() {
             </button>
           </div>
         </details>
+        {filters.tag && tagSummary && (
+          <section
+            className={`tag-summary${loading ? " is-refreshing" : ""}`}
+            aria-labelledby="tag-summary-heading"
+            aria-busy={loading}
+          >
+            <div className="tag-summary-head">
+              <div>
+                <p className="eyebrow">TAG SUMMARY</p>
+                <h3
+                  id="tag-summary-heading"
+                  ref={summaryHeading}
+                  tabIndex={-1}
+                >
+                  <span aria-hidden="true">#</span>
+                  {tagSummary.tag}
+                </h3>
+                <p className="tag-summary-span">
+                  {spanLabel(tagSummary.first, tagSummary.last)} ·{" "}
+                  {tagSummary.days} {tagSummary.days === 1 ? "day" : "days"}
+                  {otherFilters > 0 && " · within your other filters"}
+                </p>
+              </div>
+              <div className="tag-summary-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={tagPdfState === "loading"}
+                  onClick={() => void downloadTagPdf(tagSummary.tag)}
+                >
+                  <Icon name="download" size={16} />
+                  {tagPdfState === "loading" ? "Preparing..." : "Download PDF"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setTagFilter("")}
+                >
+                  Clear tag
+                </button>
+              </div>
+            </div>
+            {tagPdfState === "error" && (
+              <p className="form-message error" role="alert">
+                We couldn&apos;t create the PDF for #{tagSummary.tag}. Please
+                try again.
+              </p>
+            )}
+            {pdfOmitsFilters && (
+              <p className="tag-summary-note">
+                The PDF uses this tag with your date and search filters;
+                category and amount filters only apply on screen.
+              </p>
+            )}
+            <dl className="tag-summary-stats">
+              <div className="tag-summary-total">
+                <dt>Total spent</dt>
+                <dd>{formatCurrency(tagSummary.totalCents)}</dd>
+              </div>
+              <div>
+                <dt>Transactions</dt>
+                <dd>{tagSummary.count}</dd>
+              </div>
+              <div>
+                <dt>Average per day</dt>
+                <dd>
+                  {formatCurrency(
+                    // Whole rupiah: an average does not need sen precision.
+                    Math.round(tagSummary.totalCents / tagSummary.days / 100) *
+                      100,
+                  )}
+                </dd>
+              </div>
+            </dl>
+            <div className="tag-summary-body">
+              <div>
+                <h4>By category</h4>
+                <div className="mix-bar" aria-hidden="true">
+                  {tagSummary.categories.map((item, index) => (
+                    <span
+                      key={item.category}
+                      style={{
+                        width: `${item.percentage}%`,
+                        background: palette[Math.min(index, 4)],
+                      }}
+                    />
+                  ))}
+                </div>
+                <ul className="breakdown-list">
+                  {tagSummary.categories.map((item, index) => (
+                    <li key={item.category}>
+                      <i
+                        style={{ background: palette[Math.min(index, 4)] }}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {item.category}{" "}
+                        <small>({item.transactionCount})</small>
+                      </span>
+                      <strong>{formatCurrency(item.totalCents)}</strong>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h4>By day</h4>
+                <ul className="tag-days" id="tag-summary-days">
+                  {(showAllDays
+                    ? tagSummary.daily
+                    : tagSummary.daily.slice(0, VISIBLE_DAYS)
+                  ).map((day) => (
+                    <li key={day.day}>
+                      <time dateTime={day.day}>
+                        {dayFormat(day.day, {
+                          weekday: "short",
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </time>
+                      <span className="tag-day-bar" aria-hidden="true">
+                        <span
+                          style={{
+                            width: `${(day.totalCents / busiestDay) * 100}%`,
+                          }}
+                        />
+                      </span>
+                      <strong>{formatCurrency(day.totalCents)}</strong>
+                    </li>
+                  ))}
+                </ul>
+                {tagSummary.daily.length > VISIBLE_DAYS && (
+                  <button
+                    type="button"
+                    className="text-button tag-days-toggle"
+                    aria-expanded={showAllDays}
+                    aria-controls="tag-summary-days"
+                    onClick={() => setShowAllDays((value) => !value)}
+                  >
+                    {showAllDays
+                      ? "Show fewer days"
+                      : `Show all ${tagSummary.daily.length} days with spending`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
         {loading && !hasSummary ? (
           <p className="state" role="status">
             Loading your expenses...
@@ -829,7 +1166,14 @@ export default function ExpenseTracker() {
                 </span>
                 <div className="row-description">
                   <strong>{expense.description}</strong>
-                  <span>{expense.category}</span>
+                  <div className="row-meta">
+                    <span>{expense.category}</span>
+                    <TagList
+                      tags={expense.tags}
+                      activeTag={filters.tag}
+                      onSelect={(tag) => setTagFilter(tag, true)}
+                    />
+                  </div>
                   <ProofControls
                     expenseId={expense.id}
                     count={expense.proofCount}
@@ -975,6 +1319,14 @@ export default function ExpenseTracker() {
               </button>
             </div>
           </details>
+          <TagInput
+            id="quick-tags"
+            ref={tagInput}
+            value={tags}
+            onChange={setTags}
+            suggestions={tagNames}
+            disabled={saving}
+          />
           <details className="when-details">
             <summary>
               When <span>{date ? formatExpenseDate(date) : "Now"}</span>

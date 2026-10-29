@@ -1,6 +1,7 @@
 import { EXPENSE_CATEGORIES } from "./expense-form";
 import type { ExpenseRepository, NewExpense } from "./expenses";
 import { deleteProofFiles, type ProofFile } from "./expense-proofs";
+import { validateTagList } from "./tags";
 
 type ValidationResult =
   | { value: NewExpense }
@@ -19,7 +20,7 @@ export function validateExpense(value: unknown, supportedCategories: readonly st
     return { error: "Request body must be a JSON object." };
   }
 
-  const { amountCents, description, category, date } = value as Record<string, unknown>;
+  const { amountCents, description, category, date, tags } = value as Record<string, unknown>;
   if (
     typeof amountCents !== "number" ||
     !Number.isSafeInteger(amountCents) ||
@@ -39,6 +40,10 @@ export function validateExpense(value: unknown, supportedCategories: readonly st
   if (typeof date !== "string" || !isUtcDateTime(date)) {
     return { error: "date must be an ISO UTC datetime." };
   }
+  const validTags = tags === undefined ? undefined : validateTagList(tags);
+  if (validTags && "error" in validTags) {
+    return { error: validTags.error };
+  }
 
   return {
     value: {
@@ -46,6 +51,7 @@ export function validateExpense(value: unknown, supportedCategories: readonly st
       description: description.trim(),
       category: matchedCategory,
       date,
+      ...(validTags ? { tags: validTags.value } : {}),
     },
   };
 }

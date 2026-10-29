@@ -1,0 +1,487 @@
+/*
+ * Expense tags: chips, the chip editor, the tag summary and the tag manager.
+ * Uses only the shared semantic tokens so Ledger, the legacy surfaces and both themes agree.
+ * Selectors carry an extra class where legacy rules (`.legacy-surface .field input`,
+ * `.dashboard-content .legacy-surface button`) would otherwise win.
+ */
+
+/* Chips ------------------------------------------------------------------ */
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.tag-list > span {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.tag-list .tag-chip,
+.tag-input .tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--primary-text);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.tag-list .tag-chip > span,
+.tag-input .tag-chip > span {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+.tag-list .tag-chip > span[aria-hidden],
+.tag-input .tag-chip > span[aria-hidden] {
+  color: var(--muted-text);
+}
+.tag-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag-list button.tag-chip {
+  justify-content: flex-start;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    border-color 0.16s,
+    color 0.16s,
+    background 0.16s;
+}
+.tag-list button.tag-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  filter: none;
+}
+.tag-list button.tag-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tag-list button.tag-chip[aria-pressed="true"] > span[aria-hidden] {
+  color: inherit;
+}
+.tag-list button.tag-chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* Ledger rows: category and tags share one meta line to keep rows dense. */
+.row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.row-meta .tag-list {
+  margin-top: 0;
+}
+/* Activity rows: chips sit between the meta line and proof controls. */
+.legacy-surface .expense-main .tag-list {
+  margin-top: 8px;
+}
+.legacy-surface .selected-day .tag-list {
+  margin-top: 6px;
+}
+
+/* Chip editor ------------------------------------------------------------ */
+.tag-input {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  margin: 8px 0 16px;
+}
+.legacy-surface .field .tag-input {
+  margin: 0;
+}
+.tag-input .tag-input-label {
+  display: block;
+  margin-bottom: 8px;
+}
+.tag-input .tag-input-label span {
+  color: var(--muted-text);
+  font-weight: 400;
+}
+.tag-input .tag-input-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--canvas);
+  cursor: text;
+}
+.legacy-surface .tag-input .tag-input-box {
+  min-height: 44px;
+  padding: 5px 8px;
+  border-color: #cbd1d9;
+  border-radius: 5px;
+  background: var(--paper);
+}
+[data-theme="dark"] .legacy-surface .tag-input .tag-input-box {
+  border-color: var(--line);
+}
+.tag-input .tag-input-box:has(input:focus-visible) {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+.legacy-surface .tag-input .tag-input-box:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+}
+.tag-input[data-invalid] .tag-input-box,
+.legacy-surface .tag-input[data-invalid] .tag-input-box {
+  border-color: var(--error);
+}
+.tag-input .tag-input-box.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.tag-input .tag-input-chips {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tag-input .tag-input-chips .tag-chip {
+  gap: 2px;
+  padding: 2px 2px 2px 8px;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tag-input .tag-input-chips .tag-chip > span[aria-hidden] {
+  color: inherit;
+  opacity: 0.7;
+}
+.tag-input button.tag-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+}
+.tag-input button.tag-chip-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  filter: none;
+}
+.tag-input button.tag-chip-remove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 0;
+}
+.tag-input .tag-input-box input {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 120px;
+  min-height: 32px;
+  margin: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary-text);
+  font-size: 0.85rem;
+}
+.tag-input .tag-input-box input:focus-visible {
+  outline: none;
+}
+.tag-input .tag-input-hint,
+.tag-input .tag-input-error {
+  margin: 8px 0 0;
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.tag-input .tag-input-hint {
+  color: var(--muted-text);
+}
+.tag-input .tag-input-error {
+  color: var(--error);
+}
+
+/* Ledger toolbar: three controls need room on phones. */
+@media (max-width: 620px) {
+  .transaction-toolbar {
+    flex-wrap: wrap;
+  }
+  .transaction-toolbar .search-field {
+    flex-basis: 100%;
+  }
+  .transaction-toolbar > label:not(.search-field) {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .transaction-toolbar > label:not(.search-field) select {
+    width: 100%;
+  }
+}
+
+/* Tag summary (Ledger) --------------------------------------------------- */
+.tag-summary {
+  margin-top: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--canvas);
+  transition: opacity 0.18s;
+  animation: rise 0.3s ease-out both;
+}
+.tag-summary.is-refreshing {
+  opacity: 0.55;
+}
+.tag-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.tag-summary-head > div:first-child {
+  min-width: 0;
+}
+.tag-summary .eyebrow {
+  margin-bottom: 8px;
+}
+.tag-summary h3 {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.tag-summary h3 > span {
+  color: var(--muted-text);
+  font-weight: 500;
+}
+.tag-summary h3:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.tag-summary-span,
+.tag-summary-note {
+  margin: 0;
+  color: var(--muted-text);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+.tag-summary-note {
+  margin-top: 12px;
+}
+.tag-summary .form-message {
+  margin: 12px 0 0;
+}
+.tag-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tag-summary-actions .secondary-button {
+  min-height: 40px;
+  padding: 8px 14px;
+  font-size: 0.75rem;
+}
+.tag-summary-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+  padding: 16px 0;
+  border-block: 1px solid var(--line);
+}
+.tag-summary-stats > div {
+  min-width: 0;
+}
+.tag-summary-stats dt {
+  color: var(--muted-text);
+  font-size: 0.68rem;
+}
+.tag-summary-stats dd {
+  margin: 4px 0 0;
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.tag-summary-stats .tag-summary-total dd {
+  color: var(--accent);
+  font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+.tag-summary-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 32px;
+}
+.tag-summary-body > div {
+  min-width: 0;
+}
+.tag-summary h4 {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.tag-summary .mix-bar {
+  margin: 12px 0 16px;
+}
+.tag-summary .breakdown-list small {
+  color: var(--muted-text);
+  font-size: inherit;
+}
+.tag-days {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tag-days li {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.75rem;
+}
+.tag-days time {
+  color: var(--muted-text);
+  white-space: nowrap;
+}
+.tag-days strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.tag-day-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-raised);
+  overflow: hidden;
+}
+.tag-day-bar > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.tag-summary .tag-days-toggle {
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 8px 0;
+  font-size: 0.72rem;
+}
+@media (max-width: 760px) {
+  .tag-summary-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+@media (max-width: 620px) {
+  .tag-summary {
+    padding: 16px;
+  }
+  .tag-summary-actions {
+    width: 100%;
+  }
+  .tag-summary-actions .secondary-button {
+    flex: 1;
+  }
+  .tag-summary-stats {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .tag-summary-stats .tag-summary-total {
+    grid-column: 1 / -1;
+  }
+  .tag-days li {
+    grid-template-columns: 76px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+}
+
+/* Activity filter select and tag manager (legacy surfaces) --------------- */
+.legacy-surface .report-date select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #cbd1d9;
+  border-radius: 5px;
+  padding: 7px 9px;
+  color: var(--text);
+  background: var(--paper);
+}
+[data-theme="dark"] .legacy-surface .report-date select {
+  border-color: var(--line);
+}
+.legacy-surface .filter-dates {
+  flex-wrap: wrap;
+}
+.legacy-surface .tag-name-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.legacy-surface .tag-notice {
+  margin-top: 12px;
+  font-size: 12px;
+  background: none;
+}
+.legacy-surface .tag-notice:empty {
+  margin: 0;
+}
+.legacy-surface .tag-panel .field-error {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.legacy-surface .tag-empty {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.legacy-surface .tag-manager-list li.is-editing {
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: 12px;
+}
+.legacy-surface .tag-manager-name {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.legacy-surface .tag-manager-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.legacy-surface .tag-manager-name strong > span {
+  color: var(--muted);
+  font-weight: 500;
+}
+.legacy-surface .tag-manager-name small {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.legacy-surface .tag-manager-list li > div {
+  flex: none;
+}

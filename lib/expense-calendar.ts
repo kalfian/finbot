@@ -6,6 +6,7 @@ export type CalendarExpense = {
   category: string;
   date: string;
   createdAt: string;
+  tags?: readonly string[];
 };
 
 function datePart(value: number): string {

@@ -4,7 +4,7 @@
 
 Overview offers Day/Week/Month usage with a reference date, transaction count and actual category shares. All periods follow your saved timezone. Search/category/date/amount filters apply to the transaction list and HTML export, not overview totals. Eight records appear per page. Clearing/changing filters resets pagination; deleting the last page returns to a valid page.
 
-Add expense opens a dialog. Choose an amount, description, one of your account's categories, and date/time. Category creation is available in the dialog; renaming/deleting unused categories is available in Integrations. Failed saves retain the draft. Edit updates the selected record through REST v1.
+Add expense opens a dialog. Choose an amount, description, one of your account's categories, and date/time. Category creation is available in the dialog; renaming/deleting unused categories is available in Integrations. Failed saves retain the draft. Edit updates the selected record through REST v1. Optional tags (for example a trip name) sit below category; choosing a tag filter, or clicking a tag on a row, shows a tag summary with total, transactions, date span, per-category and per-day spend, plus a PDF download for that tag. "No tag" lists untagged expenses. Tags are renamed or deleted in Integrations; deleting a tag keeps its expenses.
 
 Deletion requires confirmation. Proof bytes and integration source mappings are permanently removed. Undo is offered only when the deleted record had no proofs; it creates a replacement ID without restoring source mappings.
 

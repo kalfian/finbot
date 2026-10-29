@@ -11,11 +11,19 @@ import { validateExpense } from "./expense-api";
 import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
 import { deleteProofFiles, listProofs, ProofError, readProof, saveProof } from "./expense-proofs";
 import { CategoryConflictError, CategoryInUseError, createCategoryRepository } from "./categories";
+import { createTagRepository, MAX_TAG_LENGTH, MAX_TAGS_PER_EXPENSE, TagConflictError, validateTagName } from "./tags";
+import { dateKeyInZone } from "./timezone";
 
 export function createExpenseMcpServer(database: Database.Database, userId: number, proofDirectory?: string): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
   const repository = createExpenseRepository(database, userId);
   const categories = createCategoryRepository(database, userId);
+  const tags = createTagRepository(database, userId);
+  const tagList = z.array(z.string().trim().min(1).max(MAX_TAG_LENGTH + 1)).max(MAX_TAGS_PER_EXPENSE);
+  const tagFilter = {
+    tag: z.string().default("").describe("Only include expenses carrying this tag name (case-insensitive). Empty means any."),
+    untagged: z.boolean().default(false).describe("Only include expenses without any tag."),
+  };
   const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
   const failure = (code: string, error: string, hint: string) => ({ isError: true, ...result({ error, code, hint }) });
   server.registerTool("get_settings", {
@@ -37,25 +45,27 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("list_expenses", {
     title: "List expenses",
-    description: "List expenses newest first, optionally filtering description or category and inclusive calendar dates in the account timezone.",
+    description: "List expenses newest first, optionally filtering description, category or tag text, an exact tag, untagged expenses, and inclusive calendar dates in the account timezone.",
     inputSchema: {
       query: z.string().default(""),
       from: z.string().default(""),
       to: z.string().default(""),
+      ...tagFilter,
     },
-  }, async ({ query, from, to }) => {
+  }, async ({ query, from, to, tag, untagged }) => {
     if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
       "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
-    return result({ timezone: getUserSettings(database,userId).timezone, expenses: filterReportExpenses(repository.list(), { query, start: from, end: to, timezone: getUserSettings(database, userId).timezone }) });
+    return result({ timezone: getUserSettings(database,userId).timezone, expenses: filterReportExpenses(repository.list(), { query, start: from, end: to, tag, untagged, timezone: getUserSettings(database, userId).timezone }) });
   });
   server.registerTool("create_expense", {
     title: "Create expense",
-    description: "Record one expense. Call list_categories first. amountCents is positive IDR minor units and date is ISO UTC. sourceId is an optional caller-generated idempotency key: use transport metadata when already available, otherwise omit it; never ask the end user for sourceId. Returns budget totals for the expense's day, Monday-based week and month in the account timezone.",
+    description: "Record one expense. Call list_categories first. amountCents is positive IDR minor units and date is ISO UTC. sourceId is an optional caller-generated idempotency key: use transport metadata when already available, otherwise omit it; never ask the end user for sourceId. tags is an optional list of free-form labels such as a trip name (\"liburan-bali\"); missing tags are created automatically, so call list_tags to reuse existing spellings. Returns budget totals for the expense's day, Monday-based week and month in the account timezone.",
     inputSchema: {
       amountCents: z.number().int().positive().safe(),
       description: z.string().trim().min(1),
       category: z.string().trim().min(1).max(80),
       date: z.string(),
+      tags: tagList.optional(),
       sourceId: z.string().min(1).max(200).optional(),
     },
   }, async (expense) => {
@@ -73,13 +83,14 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("update_expense", {
     title: "Update expense",
-    description: "Replace an owned expense's amount, description, category, and date. Returns the updated expense and recalculated budget snapshot.",
+    description: "Replace an owned expense's amount, description, category, and date. tags, when given, replaces the expense's tags ([] clears them); omit tags to keep them. Returns the updated expense and recalculated budget snapshot.",
     inputSchema: {
       expenseId: z.number().int().positive().safe(),
       amountCents: z.number().int().positive().safe(),
       description: z.string().trim().min(1),
       category: z.string().trim().min(1).max(80),
       date: z.string(),
+      tags: tagList.optional(),
     },
   }, async ({ expenseId, ...expense }) => {
     const validation = validateExpense(expense, categories.list().map(({ name }) => name));
@@ -235,18 +246,75 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
           : "Retry once, then inspect the finbot server log using the MCP request ID.");
     }
   });
+  server.registerTool("list_tags", {
+    title: "List tags",
+    description: "List the authenticated user's expense tags with expenseCount and totalCents across all time. Call before tagging so existing spellings are reused.",
+    inputSchema: {},
+  }, async () => result({ tags: tags.list() }));
+  server.registerTool("tag_expenses", {
+    title: "Tag or untag expenses",
+    description: "Add or remove one tag on several owned expenses at once, e.g. tagging every expense of a holiday after calling list_expenses for its dates. Adding creates the tag if missing; other tags are untouched.",
+    inputSchema: {
+      tag: z.string().trim().min(1).max(MAX_TAG_LENGTH + 1),
+      expenseIds: z.array(z.number().int().positive().safe()).min(1).max(500),
+      action: z.enum(["add", "remove"]).default("add"),
+    },
+  }, async ({ tag, expenseIds, action }) => {
+    let name: string;
+    try { name = validateTagName(tag); }
+    catch (error) { return failure("INVALID_TAG", (error as Error).message, `Use a tag name up to ${MAX_TAG_LENGTH} characters without commas.`); }
+    try {
+      const updated = repository.applyTag(expenseIds, name, action);
+      const missing = expenseIds.filter((id) => !updated.includes(id));
+      return result({ tag: name, action, updatedExpenseIds: updated, notFoundExpenseIds: [...new Set(missing)] });
+    } catch {
+      return failure("TAG_APPLY_FAILED", "Tags could not be updated.", "Retry once, then inspect the finbot server log using the MCP request ID.");
+    }
+  });
+  server.registerTool("rename_tag", {
+    title: "Rename tag",
+    description: "Rename an owned tag; every expense carrying it shows the new name.",
+    inputSchema: { tagId: z.number().int().positive().safe(), name: z.string().trim().min(1).max(MAX_TAG_LENGTH + 1) },
+  }, async ({ tagId, name }) => {
+    try {
+      const tag = tags.update(tagId, name);
+      return tag ? result({ tag }) : failure("TAG_NOT_FOUND", "Tag not found or not owned by this user.",
+        "Call list_tags and verify the tagId before retrying.");
+    } catch (error) {
+      return failure(error instanceof TagConflictError ? "TAG_NAME_CONFLICT" : "INVALID_TAG",
+        error instanceof Error ? error.message : "Tag could not be renamed.",
+        `Use a unique name up to ${MAX_TAG_LENGTH} characters without commas, then retry.`);
+    }
+  });
+  server.registerTool("delete_tag", {
+    title: "Delete tag",
+    description: "Delete an owned tag and remove it from every expense. The expenses themselves are kept. Requires explicit user confirmation.",
+    inputSchema: { tagId: z.number().int().positive().safe(), confirm: z.boolean() },
+  }, async ({ tagId, confirm }) => {
+    if (!confirm) return failure("DELETE_CONFIRMATION_REQUIRED", "Tag deletion was not confirmed.",
+      "Ask the user to confirm the exact tag, then retry with confirm=true.");
+    try {
+      const tag = tags.delete(tagId);
+      return tag ? result({ deleted: true, tag }) : failure("TAG_NOT_FOUND", "Tag not found or not owned by this user.",
+        "Call list_tags and verify the tagId before retrying.");
+    } catch {
+      return failure("TAG_DELETE_FAILED", "Tag could not be deleted.", "Retry once, then inspect the finbot server log using the MCP request ID.");
+    }
+  });
   server.registerTool("expense_summary", {
     title: "Expense summary",
-    description: "Total spend and counts by category using the same search and account-timezone date filters.",
+    description: "Total spend, counts by category and spend per account-timezone day using the same search, tag and date filters. Use tag to answer how much a trip or event cost.",
     inputSchema: {
       query: z.string().default(""),
       from: z.string().default(""),
       to: z.string().default(""),
+      ...tagFilter,
     },
-  }, async ({ query, from, to }) => {
+  }, async ({ query, from, to, tag, untagged }) => {
     if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
       "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
-    const expenses = filterReportExpenses(repository.list(), { query, start: from, end: to, timezone: getUserSettings(database, userId).timezone });
+    const timezone = getUserSettings(database, userId).timezone;
+    const expenses = filterReportExpenses(repository.list(), { query, start: from, end: to, tag, untagged, timezone });
     const categories: Record<string, { count: number; amountCents: number }> = {};
     for (const expense of expenses) {
       const category = categories[expense.category] ?? { count: 0, amountCents: 0 };
@@ -254,7 +322,15 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       category.amountCents += expense.amountCents;
       categories[expense.category] = category;
     }
-    return result({ timezone: getUserSettings(database,userId).timezone, count: expenses.length, totalCents: expenses.reduce((sum, item) => sum + item.amountCents, 0), categories });
+    const days: Record<string, { count: number; amountCents: number }> = {};
+    for (const expense of [...expenses].reverse()) {
+      const key = dateKeyInZone(expense.date, timezone);
+      const day = days[key] ?? { count: 0, amountCents: 0 };
+      day.count += 1;
+      day.amountCents += expense.amountCents;
+      days[key] = day;
+    }
+    return result({ timezone, count: expenses.length, totalCents: expenses.reduce((sum, item) => sum + item.amountCents, 0), categories, days });
   });
   server.registerTool("export_report_pdf", {
     title: "Export expense report",
@@ -263,11 +339,12 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
       query: z.string().default(""),
       from: z.string().default(""),
       to: z.string().default(""),
+      ...tagFilter,
     },
-  }, async ({ query, from, to }) => {
+  }, async ({ query, from, to, tag, untagged }) => {
     if (!validateReportRange(from, to)) return failure("INVALID_DATE_RANGE",
       "Choose a valid date range using YYYY-MM-DD.", "Ensure from is on or before to, or leave either value empty.");
-    const pdf = await buildExpensePdf(repository.list(), { query, start: from, end: to, timezone: getUserSettings(database, userId).timezone });
+    const pdf = await buildExpensePdf(repository.list(), { query, start: from, end: to, tag, untagged, timezone: getUserSettings(database, userId).timezone });
     return { content: [{ type: "resource", resource: {
       uri: "expense-tracker://reports/filtered.pdf", mimeType: "application/pdf", blob: pdf.toString("base64"),
     } }] };

@@ -13,6 +13,8 @@ export type NewExpenseRequest = {
   description: string;
   category: string;
   date: string;
+  /** Sent explicitly by the web forms so an empty list clears an expense's tags on update. */
+  tags?: string[];
 };
 
 export const EXPENSE_CATEGORIES = DEFAULT_EXPENSE_CATEGORIES;
