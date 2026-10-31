@@ -12,7 +12,7 @@
 | expense_categories | User-owned category names |
 | tags | User-owned tag names, case-insensitively unique per user |
 | expense_tags | Expense-to-tag links; cascade when either side is deleted |
-| expense_proofs | Receipt metadata linked to expenses; bytes in private storage |
+| expense_proofs | Proofs linked to expenses; kind is file (bytes in private storage), text or link (content in text_content, no file) |
 | expense_sources | Per-user idempotency/source mappings |
 | budget_settings | Per-user recurring monthly spending limit |
 | api_tokens | User-owned generated integration token hashes |

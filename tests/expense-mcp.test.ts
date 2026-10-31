@@ -27,7 +27,7 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     const init = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
     assert.equal(init.result.serverInfo.name, "expense-tracker");
     const tools = await call("tools/list", {});
-    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense", "list_tags", "tag_expenses", "rename_tag", "delete_tag"].sort());
+    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_proof", "attach_expense_text_proof", "attach_expense_link_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense", "list_tags", "tag_expenses", "rename_tag", "delete_tag"].sort());
     const createdCategory = await call("tools/call", { name: "create_category", arguments: { name: "Travel" } });
     const categoryId = JSON.parse(createdCategory.result.content[0].text).category.id;
     const renamedCategory = await call("tools/call", { name: "update_category", arguments: { categoryId, name: "Transit" } });
@@ -54,6 +54,14 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     assert.equal(JSON.parse(listedProofs.result.content[0].text).proofs.length, 1);
     const fetchedProof = await call("tools/call", { name: "get_expense_proof", arguments: { expenseId, proofId: proof.id } });
     assert.equal(fetchedProof.result.content[0].resource.blob, proofInput.base64);
+    const textProof = await call("tools/call", { name: "attach_expense_text_proof", arguments: { expenseId, text: "Paid via QRIS ref 123" } });
+    assert.equal(JSON.parse(textProof.result.content[0].text).proof.kind, "text");
+    const fetchedText = await call("tools/call", { name: "get_expense_proof", arguments: { expenseId, proofId: JSON.parse(textProof.result.content[0].text).proof.id } });
+    assert.deepEqual(fetchedText.result.content, [{ type: "text", text: "Paid via QRIS ref 123" }]);
+    const badLink = await call("tools/call", { name: "attach_expense_link_proof", arguments: { expenseId, url: "javascript:alert(1)" } });
+    assert.equal(JSON.parse(badLink.result.content[0].text).code, "PROOF_REJECTED");
+    const linkProof = await call("tools/call", { name: "attach_expense_link_proof", arguments: { expenseId, url: "https://example.com/r/1" } });
+    assert.equal(JSON.parse(linkProof.result.content[0].text).proof.textContent, "https://example.com/r/1");
     const updated = await call("tools/call", { name: "update_expense", arguments: {
       expenseId, amountCents: 175000, description: "Train and bus", category: "Transit", date: input.date,
     } });

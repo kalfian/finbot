@@ -4,8 +4,10 @@ export const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 export type ExpenseProof = {
   id: string;
   expenseId: number;
+  kind: string;
   filename: string;
   mimeType: string;
   sizeBytes: number;
   createdAt: string;
+  textContent?: string;
 };

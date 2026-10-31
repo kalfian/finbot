@@ -163,6 +163,8 @@ function createProofsTable(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS expense_proofs (
       id TEXT PRIMARY KEY,
       expense_id INTEGER NOT NULL REFERENCES expenses(id),
+      kind TEXT NOT NULL DEFAULT 'file',
+      text_content TEXT,
       filename TEXT NOT NULL,
       mime_type TEXT NOT NULL,
       size_bytes INTEGER NOT NULL,
@@ -173,6 +175,13 @@ function createProofsTable(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS expense_proofs_expense_id ON expense_proofs(expense_id);
   `);
+  const columns = database.prepare("SELECT name FROM pragma_table_info('expense_proofs')").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "kind")) {
+    database.exec("ALTER TABLE expense_proofs ADD COLUMN kind TEXT NOT NULL DEFAULT 'file';");
+  }
+  if (!columns.some((column) => column.name === "text_content")) {
+    database.exec("ALTER TABLE expense_proofs ADD COLUMN text_content TEXT;");
+  }
 }
 
 function createExpenseSources(database: Database.Database): void {

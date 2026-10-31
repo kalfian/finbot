@@ -90,7 +90,7 @@ Start here:
 | Record and get post-write budget snapshot | `POST /api/v1/expenses` | `create_expense` |
 | Replace an expense and recalculate budget | `PATCH /api/v1/expenses/:id` | `update_expense` |
 | Permanently delete an expense and proofs | `DELETE /api/v1/expenses/:id` | `delete_expense` |
-| Attach, list, and read receipt proof | `/api/v1/expenses/:id/proofs` | `attach_expense_proof`, `list_expense_proofs`, `get_expense_proof` |
+| Attach, list, and read receipt proof (file, text, or link) | `/api/v1/expenses/:id/proofs` | `attach_expense_proof`, `attach_expense_text_proof`, `attach_expense_link_proof`, `list_expense_proofs`, `get_expense_proof` |
 | Search and list | `GET /api/v1/expenses?q=&from=&to=` | `list_expenses` |
 | Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
 | Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
@@ -100,7 +100,7 @@ Start here:
 
 The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Both accept optional `tags`; update without `tags` keeps the current ones. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes `timezone`, local `date`/`month`, `todayCents`, `weekCents`, `weekStart`, `weekEnd`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
 
-For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
+For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. When no file is available, record a text proof (1-2000 characters) or an `http(s)` link proof instead: `POST` JSON `{ "kind": "text" | "link", "text": "..." }` to the same endpoint, or call `attach_expense_text_proof` / `attach_expense_link_proof`. All kinds share the three-proof limit. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 
 The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by a login JWT or generated Bearer token. Expense and category deletion require `confirm: true`. See the [MCP end-to-end specification](docs/mcp-end-to-end.md) and in-app [API & MCP documentation](http://localhost:3000/docs). The browser uses only `/api/v1` data contracts through its HttpOnly JWT cookie, including `GET /api/v1/reports/pdf`.
 

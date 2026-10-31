@@ -15,9 +15,13 @@ type ProofRow = {
   size_bytes: number;
   created_at: string;
   sha256: string;
+  kind: string;
+  text_content: string | null;
 };
 
 export type ProofFile = { id: string; mimeType: string };
+
+export const MAX_PROOF_TEXT_LENGTH = 2000;
 
 export class ProofError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -33,6 +37,7 @@ function proofExtension(mimeType: string): string | null {
 
 export function deleteProofFiles(proofs: ProofFile[], directory = proofsDirectory()): void {
   for (const proof of proofs) {
+    // Text and link proofs (text/plain, text/uri-list) have no file on disk.
     const extension = proofExtension(proof.mimeType);
     if (!extension) continue;
     try { rmSync(join(/* turbopackIgnore: true */ directory, `${proof.id}.${extension}`), { force: true }); } catch { /* Orphaned files remain private. */ }
@@ -40,8 +45,16 @@ export function deleteProofFiles(proofs: ProofFile[], directory = proofsDirector
 }
 
 function toProof(row: ProofRow): ExpenseProof {
-  return { id: row.id, expenseId: row.expense_id, filename: row.filename,
+  const proof: ExpenseProof = { id: row.id, expenseId: row.expense_id, kind: row.kind, filename: row.filename,
     mimeType: row.mime_type, sizeBytes: row.size_bytes, createdAt: row.created_at };
+  if (row.kind !== "file" && row.text_content !== null) proof.textContent = row.text_content;
+  return proof;
+}
+
+function validSourceId(sourceId: string | undefined): void {
+  if (sourceId !== undefined && (!sourceId.trim() || sourceId.length > 200)) {
+    throw new ProofError("sourceId must contain 1-200 characters.", 400);
+  }
 }
 
 function detectType(bytes: Uint8Array): { mimeType: string; extension: string } | null {
@@ -83,9 +96,7 @@ export async function saveProof(
 ): Promise<{ proof: ExpenseProof; replayed: boolean }> {
   if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw new ProofError("Expense not found.", 404);
   if (!file.size || file.size > MAX_PROOF_BYTES) throw new ProofError("Proof must be 1 byte to 5 MB.", 400);
-  if (sourceId !== undefined && (!sourceId.trim() || sourceId.length > 200)) {
-    throw new ProofError("sourceId must contain 1-200 characters.", 400);
-  }
+  validSourceId(sourceId);
   const bytes = new Uint8Array(await file.arrayBuffer());
   const type = detectType(bytes);
   if (!type || file.type !== type.mimeType) {
@@ -120,14 +131,77 @@ export async function saveProof(
   return { proof: toProof(database.prepare("SELECT * FROM expense_proofs WHERE id = ?").get(id) as ProofRow), replayed: false };
 }
 
+function saveContentProof(
+  database: Database.Database,
+  userId: number,
+  expenseId: number,
+  kind: "text" | "link",
+  content: string,
+  sourceId: string | undefined,
+): { proof: ExpenseProof; replayed: boolean } {
+  validSourceId(sourceId);
+  if (!database.prepare("SELECT id FROM expenses WHERE id = ? AND user_id = ?").get(expenseId, userId)) {
+    throw new ProofError("Expense not found.", 404);
+  }
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const existing = sourceId && database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? AND source_id = ?")
+    .get(expenseId, sourceId) as ProofRow | undefined;
+  if (existing) {
+    if (existing.kind !== kind || existing.sha256 !== sha256) throw new ProofError("sourceId already belongs to a different proof.", 409);
+    return { proof: toProof(existing), replayed: true };
+  }
+  const count = database.prepare("SELECT COUNT(*) AS count FROM expense_proofs WHERE expense_id = ?")
+    .get(expenseId) as { count: number };
+  if (count.count >= MAX_PROOFS) throw new ProofError("This expense already has 3 proofs.", 409);
+
+  const id = randomUUID();
+  database.prepare(`INSERT INTO expense_proofs
+    (id, expense_id, kind, text_content, filename, mime_type, size_bytes, sha256, source_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, expenseId, kind, content, kind, kind === "text" ? "text/plain" : "text/uri-list",
+    Buffer.byteLength(content), sha256, sourceId ?? null, new Date().toISOString());
+  return { proof: toProof(database.prepare("SELECT * FROM expense_proofs WHERE id = ?").get(id) as ProofRow), replayed: false };
+}
+
+export function saveTextProof(database: Database.Database, userId: number, expenseId: number, text: string, sourceId?: string):
+  { proof: ExpenseProof; replayed: boolean } {
+  if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw new ProofError("Expense not found.", 404);
+  const value = typeof text === "string" ? text.trim() : "";
+  if (!value || value.length > MAX_PROOF_TEXT_LENGTH) {
+    throw new ProofError(`Text proof must contain 1-${MAX_PROOF_TEXT_LENGTH} characters.`, 400);
+  }
+  return saveContentProof(database, userId, expenseId, "text", value, sourceId);
+}
+
+export function saveLinkProof(database: Database.Database, userId: number, expenseId: number, url: string, sourceId?: string):
+  { proof: ExpenseProof; replayed: boolean } {
+  if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw new ProofError("Expense not found.", 404);
+  const value = typeof url === "string" ? url.trim() : "";
+  const invalid = new ProofError(`Link proof must be an http(s) URL of 1-${MAX_PROOF_TEXT_LENGTH} characters without spaces.`, 400);
+  if (!value || value.length > MAX_PROOF_TEXT_LENGTH || !/^https?:\/\//i.test(value) || /[\s\x00-\x1f\x7f]/.test(value)) {
+    throw invalid;
+  }
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw invalid; }
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) throw invalid;
+  return saveContentProof(database, userId, expenseId, "link", value, sourceId);
+}
+
+export type ProofContent =
+  | { proof: ExpenseProof; bytes: Uint8Array; text?: undefined }
+  | { proof: ExpenseProof; text: string; bytes?: undefined };
+
 export function readProof(database: Database.Database, userId: number, expenseId: number, proofId: string, directory = proofsDirectory()):
-  { proof: ExpenseProof; bytes: Uint8Array } {
+  ProofContent {
   const row = database.prepare(`
     SELECT expense_proofs.* FROM expense_proofs
     JOIN expenses ON expenses.id = expense_proofs.expense_id
     WHERE expense_proofs.expense_id = ? AND expense_proofs.id = ? AND expenses.user_id = ?
   `).get(expenseId, proofId, userId) as ProofRow | undefined;
   if (!row) throw new ProofError("Proof not found.", 404);
+  if (row.kind !== "file") {
+    if (row.text_content === null) throw new Error("Invalid stored proof content.");
+    return { proof: toProof(row), text: row.text_content };
+  }
   const extension = proofExtension(row.mime_type);
   if (!extension) throw new Error("Invalid stored proof type.");
   return { proof: toProof(row), bytes: new Uint8Array(readFileSync(join(/* turbopackIgnore: true */ directory, `${row.id}.${extension}`))) };

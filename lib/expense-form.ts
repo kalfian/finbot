@@ -156,3 +156,14 @@ export async function uploadProof(expenseId: number, file: File, sourceId: strin
   throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
     ? body.error : "Proof could not be uploaded.");
 }
+
+export async function addContentProof(expenseId: number, kind: "text" | "link", text: string, sourceId: string,
+  fetchImplementation: FetchImplementation = fetch): Promise<void> {
+  const response = await fetchImplementation(`/api/v1/expenses/${expenseId}/proofs`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, text, sourceId }),
+  });
+  if (response.ok) return;
+  const body: unknown = await response.json().catch(() => null);
+  throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
+    ? body.error : "Proof could not be saved.");
+}

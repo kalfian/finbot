@@ -316,4 +316,6 @@
 .ledger-workspace .proof-details a { overflow-wrap: anywhere; }
 .ledger-workspace .proof-add { display: grid; gap: 8px; }
 .ledger-workspace .proof-add input { width: 100%; font-size: .7rem; }
+.proof-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.proof-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 900px) { .rail-nav { overflow-x: auto; flex-wrap: nowrap; } .rail-nav a { flex-shrink: 0; white-space: nowrap; } }

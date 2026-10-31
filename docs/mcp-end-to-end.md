@@ -49,7 +49,7 @@ Call a tool:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_categories","arguments":{}}}
 ```
 
-Tool results that contain normal structured data return it as JSON inside `result.content[0].text`. Proof downloads and PDF reports return embedded resources with base64 bytes.
+Tool results that contain normal structured data return it as JSON inside `result.content[0].text`. File proof downloads and PDF reports return embedded resources with base64 bytes; text and link proofs return their content as plain text.
 
 ## 4. Tool Catalog
 
@@ -65,6 +65,8 @@ Tool results that contain normal structured data return it as JSON inside `resul
 | `delete_expense` | Permanently delete an expense and proofs | `expenseId`, `confirm: true` |
 | `list_expense_proofs` | List proof metadata | `expenseId` |
 | `attach_expense_proof` | Attach JPEG, PNG, WebP, or PDF bytes | `expenseId`, `filename`, `mimeType`, `base64`; optional `sourceId` |
+| `attach_expense_text_proof` | Attach free-form text (1-2000 characters) | `expenseId`, `text`; optional `sourceId` |
+| `attach_expense_link_proof` | Attach an `http(s)` URL without spaces | `expenseId`, `url`; optional `sourceId` |
 | `get_expense_proof` | Read one proof | `expenseId`, `proofId` |
 | `budget_status` | Read daily/monthly totals and recurring limit | optional `date` (`YYYY-MM-DD`) |
 | `set_monthly_limit` | Set or clear recurring monthly limit | positive `monthlyLimitCents` or `null` |
@@ -85,7 +87,7 @@ Tags are optional free-form labels (for example a trip, `Liburan Bali`) that sit
 | --- | --- | --- |
 | `GET/POST /api/v1/expenses` | `list_expenses`, `create_expense` | complete |
 | `PATCH/DELETE /api/v1/expenses/:id` | `update_expense`, `delete_expense` | complete |
-| `GET/POST /api/v1/expenses/:id/proofs` | `list_expense_proofs`, `attach_expense_proof` | complete |
+| `GET/POST /api/v1/expenses/:id/proofs` | `list_expense_proofs`, `attach_expense_proof`, `attach_expense_text_proof`, `attach_expense_link_proof` | complete |
 | `GET /api/v1/expenses/:id/proofs/:proofId` | `get_expense_proof` | complete |
 | `GET/PUT /api/v1/budget` | `budget_status`, `set_monthly_limit` | complete |
 | `GET/POST /api/v1/categories` | `list_categories`, `create_category` | complete |
@@ -143,6 +145,8 @@ Required flow:
 4. Call `create_expense` once for the grand total.
 5. After creation succeeds, call `attach_expense_proof` using the returned expense ID and the original image bytes.
 6. Report the proof as attached only after the attachment tool succeeds.
+
+When no image is available (or bytes cannot be sent), record the evidence with `attach_expense_text_proof` (for example a transfer reference) or `attach_expense_link_proof` (an online receipt URL). These count toward the same three-proof limit.
 
 Example expense call:
 
@@ -212,7 +216,7 @@ Common codes:
 - `CATEGORY_NAME_CONFLICT`: choose another category name.
 - `CATEGORY_IN_USE`: move/delete associated expenses first.
 - `INVALID_TAG` / `TAG_NAME_CONFLICT` / `TAG_NOT_FOUND`: fix the tag name, choose another name, or refresh with `list_tags`.
-- `PROOF_REJECTED`: verify ownership, MIME type, file signature, 5 MiB limit, and three-proof limit.
+- `PROOF_REJECTED`: verify ownership, MIME type, file signature, 5 MiB limit, and three-proof limit; for text/link proofs, verify 1-2000 characters and an `http(s)` URL without spaces.
 
 ## 11. Completion Checklist
 

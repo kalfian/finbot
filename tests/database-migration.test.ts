@@ -51,3 +51,35 @@ test("legacy data migrates to admin ownership with required isolation indexes", 
     database.close();
   }
 });
+
+test("legacy proof rows gain kind 'file' and empty text content", () => {
+  const database = new Database(":memory:");
+  try {
+    initializeDatabase(database);
+    database.exec(`
+      DROP TABLE expense_proofs;
+      CREATE TABLE expense_proofs (
+        id TEXT PRIMARY KEY,
+        expense_id INTEGER NOT NULL REFERENCES expenses(id),
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        source_id TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (expense_id, source_id)
+      );
+      INSERT INTO expenses (id, user_id, amount_cents, description, category, date, created_at)
+        VALUES (9, 1, 100, 'Legacy proof', 'Other', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      INSERT INTO expense_proofs VALUES ('legacy-proof', 9, 'r.png', 'image/png', 12, 'hash', NULL, '2026-01-01T00:00:00.000Z');
+    `);
+
+    initializeDatabase(database);
+    initializeDatabase(database);
+
+    assert.deepEqual(database.prepare("SELECT kind, text_content FROM expense_proofs WHERE id = 'legacy-proof'").get(),
+      { kind: "file", text_content: null });
+  } finally {
+    database.close();
+  }
+});
