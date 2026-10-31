@@ -2,7 +2,7 @@
 
 A personal expense tracker with a redesigned **Ledger** dashboard: monthly spending, real category totals, searchable transactions, and a focused add/edit dialog. Cool light and navy dark themes retain the original simple sans-serif typography.
 
-The dashboard uses the same authenticated **REST v1** contracts as external integrations. Each account owns its expenses, categories, receipt proofs, monthly limit, source IDs, and integration tokens. Calendar, PDF reporting, and receipt upload/retry remain available through **Calendar & reports**. Integrations and administrator-only user management are linked from the navigation.
+The dashboard uses the same authenticated **REST v1** contracts as external integrations. Each account owns its expenses, categories, receipt proofs, monthly limit, source IDs, and integration tokens. Calendar and PDF reporting remain available through **Calendar & reports**. Integrations and administrator-only user management are linked from the navigation.
 
 ## Screenshots
 
@@ -32,7 +32,7 @@ npm run dev -- --hostname 127.0.0.1
 
 Open localhost:3000. A fresh database creates `admin` with temporary password `123456`; changing it is mandatory before accessing financial records. New passwords require 8-128 characters including a letter and a number. Administrators can create other accounts from Users.
 
-`DATABASE_PATH` defaults to `data/financial-tracker.db`. Proof files live in `proofs/` beside the database; back up both together. Session signing material is generated and retained in the database; no session-secret environment variable is required. Keep the service private unless HTTPS and network access controls are configured.
+`DATABASE_PATH` defaults to `data/financial-tracker.db`. Proofs are text stored in the database; legacy proof files from earlier versions remain in `proofs/` beside it, so back up both together. Session signing material is generated and retained in the database; no session-secret environment variable is required. Keep the service private unless HTTPS and network access controls are configured.
 
 ```bash
 npm run build
@@ -44,8 +44,8 @@ npm start -- --hostname 127.0.0.1
 - Add/edit in a focused dialog; failed saves retain your draft.
 - Search descriptions or categories, select a category, and expand date/amount filters. Results display eight per page; HTML export includes all matching results.
 - Switch Day / Week / Month and choose a reference date to review usage. Totals and category shares follow your saved timezone, independent of transaction filters. Weeks run Monday through Sunday.
-- Attach receipts from a transaction row, or attach files during entry on Calendar & reports. Up to three JPEG/PNG/WebP/PDF files per expense, 5 MiB each.
-- Deletion permanently removes proof files and source mappings. Dashboard Undo is offered only for records without proofs and creates a new record/ID; it does not restore integration source IDs.
+- Add text proofs (for example a transfer reference or receipt details, 1-2000 characters) from a transaction row. Up to three proofs per expense; image/file and link uploads are not supported.
+- Deletion permanently removes proofs (including any legacy proof files) and source mappings. Dashboard Undo is offered only for records without proofs and creates a new record/ID; it does not restore integration source IDs.
 - Calendar & reports provides the existing calendar and PDF export. Its search/date filters are separate from dashboard filters; PDF dates use inclusive days in your saved timezone.
 - Integrations manages user-owned categories, recurring monthly spending limits, and tokens. Each new user starts with Food, Transport, Bills, Shopping, Health, and Other.
 
@@ -90,7 +90,7 @@ Start here:
 | Record and get post-write budget snapshot | `POST /api/v1/expenses` | `create_expense` |
 | Replace an expense and recalculate budget | `PATCH /api/v1/expenses/:id` | `update_expense` |
 | Permanently delete an expense and proofs | `DELETE /api/v1/expenses/:id` | `delete_expense` |
-| Attach, list, and read receipt proof (file, text, or link) | `/api/v1/expenses/:id/proofs` | `attach_expense_proof`, `attach_expense_text_proof`, `attach_expense_link_proof`, `list_expense_proofs`, `get_expense_proof` |
+| Attach, list, and read text proof | `/api/v1/expenses/:id/proofs` | `attach_expense_text_proof`, `list_expense_proofs`, `get_expense_proof` |
 | Search and list | `GET /api/v1/expenses?q=&from=&to=` | `list_expenses` |
 | Read daily/monthly spending and limit | `GET /api/v1/budget?date=YYYY-MM-DD` | `budget_status` |
 | Set or clear recurring limit | `PUT /api/v1/budget` | `set_monthly_limit` |
@@ -100,7 +100,7 @@ Start here:
 
 The REST create and update bodies require positive integer `amountCents` (IDR minor units), non-blank `description`, a supported `category`, and exact UTC `date` (`YYYY-MM-DDTHH:mm:ss.sssZ`). Create accepts an optional stable `sourceId`; update is a full replacement of those four expense fields. Both accept optional `tags`; update without `tags` keeps the current ones. Update and delete return the affected expense plus a recalculated `budget`. Delete is permanent and removes source mappings, proof metadata, and private proof files. `budget` includes `timezone`, local `date`/`month`, `todayCents`, `weekCents`, `weekStart`, `weekEnd`, `monthCents`, `monthlyLimitCents`, signed `remainingCents`, and `exceeded`.
 
-For a receipt, upload one file at a time after creating the expense via token-authenticated multipart `POST /api/v1/expenses/:id/proofs`, or use MCP `attach_expense_proof` with base64 bytes. When no file is available, record a text proof (1-2000 characters) or an `http(s)` link proof instead: `POST` JSON `{ "kind": "text" | "link", "text": "..." }` to the same endpoint, or call `attach_expense_text_proof` / `attach_expense_link_proof`. All kinds share the three-proof limit. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and fetch bytes through the respective proof endpoints/tools. No OCR is performed; the agent may interpret a photo itself before recording the expense.
+Proofs are text-only. After creating the expense, record proof text (1-2000 characters, such as a transfer reference, receipt details, or an order URL) with JSON `POST /api/v1/expenses/:id/proofs` `{ "text": "..." }` or MCP `attach_expense_text_proof`; up to three per expense. Multipart/file uploads are rejected with 415. A proof `sourceId` is optional and should come from adapter metadata when available. List metadata and read proof text through the respective proof endpoints/tools; legacy file and link proofs from earlier versions remain readable. No OCR is performed; the agent may interpret a photo itself before recording the expense.
 
 The MCP endpoint is Streamable HTTP at `http://localhost:3000/mcp`, authenticated by a login JWT or generated Bearer token. Expense and category deletion require `confirm: true`. See the [MCP end-to-end specification](docs/mcp-end-to-end.md) and in-app [API & MCP documentation](http://localhost:3000/docs). The browser uses only `/api/v1` data contracts through its HttpOnly JWT cookie, including `GET /api/v1/reports/pdf`.
 

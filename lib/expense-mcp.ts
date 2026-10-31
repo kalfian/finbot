@@ -9,7 +9,7 @@ import { buildExpensePdf } from "./expense-report";
 import { filterReportExpenses, validateReportRange } from "./expense-filters";
 import { validateExpense } from "./expense-api";
 import { budgetSnapshot, createBudgetRepository, validBudgetDate } from "./budget";
-import { deleteProofFiles, listProofs, ProofError, readProof, saveLinkProof, saveProof, saveTextProof } from "./expense-proofs";
+import { deleteProofFiles, listProofs, ProofError, readProof, saveTextProof } from "./expense-proofs";
 import { CategoryConflictError, CategoryInUseError, createCategoryRepository } from "./categories";
 import { createTagRepository, MAX_TAG_LENGTH, MAX_TAGS_PER_EXPENSE, TagConflictError, validateTagName } from "./tags";
 import { dateKeyInZone } from "./timezone";
@@ -108,7 +108,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("delete_expense", {
     title: "Delete expense",
-    description: "Permanently delete an owned expense, its source mapping, and private proof files. Invoke only after the user explicitly confirms deletion.",
+    description: "Permanently delete an owned expense, its source mapping, and proofs (including any legacy proof files). Invoke only after the user explicitly confirms deletion.",
     inputSchema: {
       expenseId: z.number().int().positive().safe(),
       confirm: z.boolean(),
@@ -130,41 +130,16 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("list_expense_proofs", {
     title: "List expense proofs",
-    description: "List proof metadata attached to an expense. kind is file, text, or link; text and link proofs include textContent.",
+    description: "List proof metadata attached to an expense. New proofs are kind text with textContent; legacy rows may be kind file or link.",
     inputSchema: { expenseId: z.number().int().positive().safe() },
   }, async ({ expenseId }) => {
     try { return result({ proofs: listProofs(database, userId, expenseId) }); }
     catch (error) { return failure("PROOF_LIST_FAILED", error instanceof Error ? error.message : "Proofs unavailable.",
       "Verify the expenseId belongs to this user, then retry."); }
   });
-  server.registerTool("attach_expense_proof", {
-    title: "Attach expense proof",
-    description: "Save a JPEG, PNG, WebP, or PDF proof to an existing expense. 5 MB maximum, 3 proofs per expense. sourceId is optional; use an existing transport event ID for safe retries or omit it, and never ask the end user for one.",
-    inputSchema: {
-      expenseId: z.number().int().positive().safe(),
-      filename: z.string().min(1).max(120),
-      mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]),
-      base64: z.string().max(7_000_000),
-      sourceId: z.string().min(1).max(200).optional(),
-    },
-  }, async ({ expenseId, filename, mimeType, base64, sourceId }) => {
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
-      return failure("INVALID_BASE64", "base64 must contain valid encoded file bytes.",
-        "Encode the complete file bytes as standard base64 and retry.");
-    }
-    try {
-      const file = new File([Buffer.from(base64, "base64")], filename, { type: mimeType });
-      const saved = await saveProof(database, userId, expenseId, file, proofDirectory, sourceId);
-      return result(saved);
-    } catch (error) {
-      return failure(error instanceof ProofError ? "PROOF_REJECTED" : "PROOF_SAVE_FAILED",
-        error instanceof ProofError ? error.message : "Proof could not be saved.",
-        "Verify the expenseId, file type, 5 MB size limit, three-proof limit, and sourceId before retrying.");
-    }
-  });
   server.registerTool("attach_expense_text_proof", {
-    title: "Attach expense text proof",
-    description: "Save free-form text (1-2000 characters, e.g. a transfer reference or receipt transcript) as proof on an existing expense when no file is available. Counts toward the 3-proof limit. sourceId is optional; use an existing transport event ID for safe retries or omit it.",
+    title: "Attach expense proof",
+    description: "Save free-form text (1-2000 characters, e.g. a transfer reference, receipt transcript, or order URL) as proof on an existing expense. Proofs are text-only; 3 proofs per expense. sourceId is optional; use an existing transport event ID for safe retries or omit it, and never ask the end user for one.",
     inputSchema: {
       expenseId: z.number().int().positive().safe(),
       text: z.string().min(1).max(4000),
@@ -178,25 +153,9 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
         "Verify the expenseId, 1-2000 character text, three-proof limit, and sourceId before retrying.");
     }
   });
-  server.registerTool("attach_expense_link_proof", {
-    title: "Attach expense link proof",
-    description: "Save an http(s) URL (up to 2000 characters, no spaces), such as an online receipt or order page, as proof on an existing expense. Counts toward the 3-proof limit. sourceId is optional; use an existing transport event ID for safe retries or omit it.",
-    inputSchema: {
-      expenseId: z.number().int().positive().safe(),
-      url: z.string().min(1).max(4000),
-      sourceId: z.string().min(1).max(200).optional(),
-    },
-  }, async ({ expenseId, url, sourceId }) => {
-    try { return result(saveLinkProof(database, userId, expenseId, url, sourceId)); }
-    catch (error) {
-      return failure(error instanceof ProofError ? "PROOF_REJECTED" : "PROOF_SAVE_FAILED",
-        error instanceof ProofError ? error.message : "Proof could not be saved.",
-        "Verify the expenseId, http(s) URL without spaces, three-proof limit, and sourceId before retrying.");
-    }
-  });
   server.registerTool("get_expense_proof", {
     title: "Read expense proof",
-    description: "Return a file proof as a base64 embedded resource, or a text/link proof's content as plain text.",
+    description: "Return a proof's text as plain text. Legacy file proofs are returned as a base64 embedded resource.",
     inputSchema: { expenseId: z.number().int().positive().safe(), proofId: z.string().uuid() },
   }, async ({ expenseId, proofId }) => {
     try {

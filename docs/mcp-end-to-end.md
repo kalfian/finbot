@@ -49,7 +49,7 @@ Call a tool:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_categories","arguments":{}}}
 ```
 
-Tool results that contain normal structured data return it as JSON inside `result.content[0].text`. File proof downloads and PDF reports return embedded resources with base64 bytes; text and link proofs return their content as plain text.
+Tool results that contain normal structured data return it as JSON inside `result.content[0].text`. PDF reports return embedded resources with base64 bytes. `get_expense_proof` returns proof text as plain text (legacy file proofs return a base64 resource).
 
 ## 4. Tool Catalog
 
@@ -64,9 +64,7 @@ Tool results that contain normal structured data return it as JSON inside `resul
 | `update_expense` | Replace editable expense fields | `expenseId`, `amountCents`, `description`, `category`, `date`; optional `tags` (omit to keep) |
 | `delete_expense` | Permanently delete an expense and proofs | `expenseId`, `confirm: true` |
 | `list_expense_proofs` | List proof metadata | `expenseId` |
-| `attach_expense_proof` | Attach JPEG, PNG, WebP, or PDF bytes | `expenseId`, `filename`, `mimeType`, `base64`; optional `sourceId` |
-| `attach_expense_text_proof` | Attach free-form text (1-2000 characters) | `expenseId`, `text`; optional `sourceId` |
-| `attach_expense_link_proof` | Attach an `http(s)` URL without spaces | `expenseId`, `url`; optional `sourceId` |
+| `attach_expense_text_proof` | Attach proof text (1-2000 characters); proofs are text-only | `expenseId`, `text`; optional `sourceId` |
 | `get_expense_proof` | Read one proof | `expenseId`, `proofId` |
 | `budget_status` | Read daily/monthly totals and recurring limit | optional `date` (`YYYY-MM-DD`) |
 | `set_monthly_limit` | Set or clear recurring monthly limit | positive `monthlyLimitCents` or `null` |
@@ -87,7 +85,7 @@ Tags are optional free-form labels (for example a trip, `Liburan Bali`) that sit
 | --- | --- | --- |
 | `GET/POST /api/v1/expenses` | `list_expenses`, `create_expense` | complete |
 | `PATCH/DELETE /api/v1/expenses/:id` | `update_expense`, `delete_expense` | complete |
-| `GET/POST /api/v1/expenses/:id/proofs` | `list_expense_proofs`, `attach_expense_proof`, `attach_expense_text_proof`, `attach_expense_link_proof` | complete |
+| `GET/POST /api/v1/expenses/:id/proofs` | `list_expense_proofs`, `attach_expense_text_proof` | complete |
 | `GET /api/v1/expenses/:id/proofs/:proofId` | `get_expense_proof` | complete |
 | `GET/PUT /api/v1/budget` | `budget_status`, `set_monthly_limit` | complete |
 | `GET/POST /api/v1/categories` | `list_categories`, `create_category` | complete |
@@ -143,10 +141,8 @@ Required flow:
 2. If there are multiple plausible totals or the image is unreadable, ask the user. Do not write yet.
 3. Call `list_categories` and select the closest existing category. Do not invent an unregistered category.
 4. Call `create_expense` once for the grand total.
-5. After creation succeeds, call `attach_expense_proof` using the returned expense ID and the original image bytes.
+5. After creation succeeds, call `attach_expense_text_proof` with the returned expense ID and a short text summary of the receipt (merchant, total, date, reference). Finbot does not store images; proofs are text-only.
 6. Report the proof as attached only after the attachment tool succeeds.
-
-When no image is available (or bytes cannot be sent), record the evidence with `attach_expense_text_proof` (for example a transfer reference) or `attach_expense_link_proof` (an online receipt URL). These count toward the same three-proof limit.
 
 Example expense call:
 
@@ -154,13 +150,13 @@ Example expense call:
 {"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"create_expense","arguments":{"amountCents":8750000,"description":"Supermarket invoice","category":"Shopping","date":"2026-09-29T05:20:00.000Z","sourceId":"telegram:999443054:732"}}}
 ```
 
-Example proof call; `<BASE64_IMAGE_BYTES>` must be replaced by the adapter, never by the user:
+Example proof call:
 
 ```json
-{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"attach_expense_proof","arguments":{"expenseId":43,"filename":"receipt.jpg","mimeType":"image/jpeg","base64":"<BASE64_IMAGE_BYTES>","sourceId":"telegram:999443054:732:photo:1"}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"attach_expense_text_proof","arguments":{"expenseId":43,"text":"Supermarket invoice, total Rp87.500, 2026-09-29","sourceId":"telegram:999443054:732:proof:1"}}}
 ```
 
-If proof upload fails after expense creation, retry only `attach_expense_proof`. Do not create another expense.
+If the proof call fails after expense creation, retry only `attach_expense_text_proof`. Do not create another expense.
 
 ## 7. Corrections and Deletion
 
@@ -205,7 +201,7 @@ Rejected tools return JSON text containing:
 {"error":"Readable explanation","code":"STABLE_CODE","hint":"Corrective action","requestId":"uuid"}
 ```
 
-The same request ID appears in `X-MCP-Request-ID` and safe server logs. When reporting a failure, include the readable error and request ID. Never expose credentials or base64 proof data.
+The same request ID appears in `X-MCP-Request-ID` and safe server logs. When reporting a failure, include the readable error and request ID. Never expose credentials or proof content.
 
 Common codes:
 
@@ -216,7 +212,7 @@ Common codes:
 - `CATEGORY_NAME_CONFLICT`: choose another category name.
 - `CATEGORY_IN_USE`: move/delete associated expenses first.
 - `INVALID_TAG` / `TAG_NAME_CONFLICT` / `TAG_NOT_FOUND`: fix the tag name, choose another name, or refresh with `list_tags`.
-- `PROOF_REJECTED`: verify ownership, MIME type, file signature, 5 MiB limit, and three-proof limit; for text/link proofs, verify 1-2000 characters and an `http(s)` URL without spaces.
+- `PROOF_REJECTED`: verify ownership, 1-2000 character text, and the three-proof limit.
 
 ## 11. Completion Checklist
 
@@ -228,7 +224,7 @@ Before replying “saved” or “updated”, verify all applicable items:
 - The amount was converted to cents correctly.
 - The date is the intended UTC instant.
 - Returned budget totals, not guessed totals, are used in the reply.
-- For a receipt, proof upload succeeded before claiming it is attached.
+- For a receipt, the proof call succeeded before claiming it is attached.
 - `sourceId` was supplied by the adapter or omitted; the user was never asked for it.
 
 ## Timezone and usage tools

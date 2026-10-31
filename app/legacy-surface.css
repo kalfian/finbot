@@ -116,16 +116,9 @@
 .legacy-surface .proof-toggle { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 3px 0; color: var(--accent); background: transparent; font-size: 12px; font-weight: 700; }
 .legacy-surface .proof-toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
 .legacy-surface .proof-details { display: grid; justify-items: start; gap: 7px; margin-top: 7px; padding: 11px 13px; border-left: 2px solid var(--accent); background: var(--accent-soft); font-size: 12px; }
-.legacy-surface .proof-details a, .legacy-surface .proof-add { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; color: var(--accent); overflow-wrap: anywhere; }
+.legacy-surface .proof-details a { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; color: var(--accent); overflow-wrap: anywhere; }
 .legacy-surface .proof-details p { color: var(--muted); line-height: 1.4; }
 .legacy-surface .proof-details .field-error { color: var(--danger); }
-.legacy-surface .proof-add { position: relative; cursor: pointer; font-weight: 700; }
-.legacy-surface .proof-add input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.legacy-surface .proof-add:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
-.legacy-surface .proof-field label { display: flex; align-items: center; gap: 7px; }
-.legacy-surface .proof-field input[type="file"] { padding: 9px; font-size: 12px; }
-.legacy-surface .proof-selection { margin-top: 8px; color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
-.legacy-surface .proof-retry-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 
 .legacy-surface .entry-panel form { padding: 4px 30px 30px; }
 .legacy-surface .entry-panel.edit-mode { border-color: var(--accent); }

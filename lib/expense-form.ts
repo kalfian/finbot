@@ -146,21 +146,9 @@ export async function deleteExpense(id: number, fetchImplementation: FetchImplem
     ? body.error : "We couldn't delete this expense. Please try again.");
 }
 
-export async function uploadProof(expenseId: number, file: File, sourceId: string, fetchImplementation: FetchImplementation = fetch): Promise<void> {
-  const form = new FormData();
-  form.set("file", file);
-  form.set("sourceId", sourceId);
-  const response = await fetchImplementation(`/api/v1/expenses/${expenseId}/proofs`, { method: "POST", body: form });
-  if (response.ok) return;
-  const body: unknown = await response.json().catch(() => null);
-  throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
-    ? body.error : "Proof could not be uploaded.");
-}
-
-export async function addContentProof(expenseId: number, kind: "text" | "link", text: string, sourceId: string,
-  fetchImplementation: FetchImplementation = fetch): Promise<void> {
+export async function addTextProof(expenseId: number, text: string, sourceId: string, fetchImplementation: FetchImplementation = fetch): Promise<void> {
   const response = await fetchImplementation(`/api/v1/expenses/${expenseId}/proofs`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, text, sourceId }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, sourceId }),
   });
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => null);

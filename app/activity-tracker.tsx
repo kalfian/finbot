@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Link from "next/link";
 import { usePreferences } from "./components/preferences";
 import { dateKeyInZone } from "@/lib/timezone";
-import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Paperclip, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Download, List, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import ThemeToggle from "./theme-toggle";
 import ProofControls from "./proof-controls";
 import { formatExpenseDate } from "@/lib/date-time";
@@ -17,8 +17,7 @@ import {
   summarizeLocalMonth,
   type CalendarExpense,
 } from "@/lib/expense-calendar";
-import { amountCentsToInput, deleteExpense, getBrowserLocalDateTime, saveExpense, updateExpense, uploadProof, validateExpenseForm } from "@/lib/expense-form";
-import { MAX_PROOFS, MAX_PROOF_BYTES } from "@/lib/proof-types";
+import { amountCentsToInput, deleteExpense, getBrowserLocalDateTime, saveExpense, updateExpense, validateExpenseForm } from "@/lib/expense-form";
 import { calculateTotal, formatCurrency } from "@/lib/money";
 import { filterReportExpenses, validateReportRange } from "@/lib/expense-filters";
 import AccountNav from "./account-nav";
@@ -57,9 +56,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("");
   const [date, setDate] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  const [pendingProofs, setPendingProofs] = useState<{ expenseId: number; files: { file: File; sourceId: string }[] } | null>(null);
-  const [isRetryingProofs, setIsRetryingProofs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activityView, setActivityView] = useState<ActivityView>("list");
   const [currentMonth, setCurrentMonth] = useState(() => startOfLocalMonth(new Date()));
@@ -76,7 +72,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   const descriptionRef = useRef<HTMLInputElement>(null);
   const categoryRef = useRef<HTMLSelectElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
-  const proofInputRef = useRef<HTMLInputElement>(null);
   const listTabRef = useRef<HTMLButtonElement>(null);
   const calendarTabRef = useRef<HTMLButtonElement>(null);
 
@@ -176,11 +171,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
       ({ amount: amountRef, description: descriptionRef, category: categoryRef, date: dateRef })[field].current?.focus();
       return;
     }
-    if (files.length > MAX_PROOFS || files.some((file) => !file.size || file.size > MAX_PROOF_BYTES)) {
-      setFormError("Choose up to 3 proofs, each 1 byte to 5 MB.");
-      proofInputRef.current?.focus();
-      return;
-    }
     const finalTags = tagInputRef.current ? tagInputRef.current.commit() : tags;
     if (!finalTags) return;
     // Tags are always sent so clearing every chip also clears them on update.
@@ -188,9 +178,8 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
 
     setIsSubmitting(true);
     try {
-      const expenseId = editingExpenseId ?? await saveExpense(payload);
       if (editingExpenseId !== null) await updateExpense(editingExpenseId, payload);
-      const selectedProofs = files.map((file) => ({ file, sourceId: crypto.randomUUID() }));
+      else await saveExpense(payload);
       const wasEditing = editingExpenseId !== null;
       setEditingExpenseId(null);
       setAmount("");
@@ -198,8 +187,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
       setCategory(categories[0] ?? "");
       setDate(getBrowserLocalDateTime());
       setTags([]);
-      setFiles([]);
-      if (proofInputRef.current) proofInputRef.current.value = "";
       void loadTags();
       const savedDate = new Date(dateKeyInZone(validation.value.date,timezone)+"T12:00");
       setCalendarMonth(startOfLocalMonth(savedDate));
@@ -208,35 +195,10 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
       setSuccessMessage(refreshed
         ? wasEditing ? "Expense updated." : "Expense added."
         : "Expense saved, but the list couldn't refresh. Try again below.");
-      if (selectedProofs.length) await attachPending({ expenseId, files: selectedProofs });
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "We couldn't save this expense. Please try again.");
     } finally {
       setIsSubmitting(false);
-    }
-  }
-
-  async function attachPending(pending: { expenseId: number; files: { file: File; sourceId: string }[] }) {
-    setIsRetryingProofs(true);
-    setPendingProofs(pending);
-    try {
-      for (let index = 0; index < pending.files.length; index++) {
-        const { file, sourceId } = pending.files[index];
-        try {
-          await uploadProof(pending.expenseId, file, sourceId);
-        } catch (error) {
-          setPendingProofs({ expenseId: pending.expenseId, files: pending.files.slice(index) });
-          setFormError(error instanceof Error ? `Expense saved, but proof upload failed: ${error.message}` : "Expense saved, but proof upload failed.");
-          await loadExpenses();
-          return;
-        }
-      }
-      setPendingProofs(null);
-      setFormError("");
-      setSuccessMessage("Expense and proofs saved.");
-      await loadExpenses();
-    } finally {
-      setIsRetryingProofs(false);
     }
   }
 
@@ -247,7 +209,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     setCategory(categories[0] ?? "");
     setDate(getBrowserLocalDateTime());
     setTags([]);
-    setFiles([]);
     setFormError("");
     setInvalidField(null);
     setSuccessMessage("");
@@ -260,8 +221,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
     setCategory(expense.category);
     setDate(getBrowserLocalDateTime(new Date(expense.date)));
     setTags(expense.tags ? [...expense.tags] : []);
-    setFiles([]);
-    if (proofInputRef.current) proofInputRef.current.value = "";
     setFormError("");
     setInvalidField(null);
     setSuccessMessage("");
@@ -270,7 +229,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
   }
 
   async function handleDelete(expense: Expense) {
-    if (!window.confirm(`Delete "${expense.description}"? Its proof files will also be permanently deleted.`)) return;
+    if (!window.confirm(`Delete "${expense.description}"? Its proofs will also be permanently deleted.`)) return;
     setDeletingExpenseId(expense.id);
     setActivityError("");
     setActivityMessage("");
@@ -278,7 +237,6 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
       await deleteExpense(expense.id);
       setExpenses((current) => current.filter((item) => item.id !== expense.id));
       if (editingExpenseId === expense.id) handleReset();
-      if (pendingProofs?.expenseId === expense.id) setPendingProofs(null);
       setActivityMessage("Expense deleted.");
       void loadTags();
     } catch (error) {
@@ -456,23 +414,9 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
               <div className="field"><label htmlFor="category">Category</label><select ref={categoryRef} id="category" name="category" value={category} onChange={(event) => { setCategory(event.target.value); clearFieldError("category"); }} aria-describedby={invalidField === "category" ? "category-error" : undefined} aria-invalid={invalidField === "category"} required disabled={!categories.length}>{!categories.length && <option value="">No categories available</option>}{categories.map((expenseCategory) => <option key={expenseCategory} value={expenseCategory}>{expenseCategory}</option>)}</select>{fieldError("category")}</div>
           <div className="field"><TagInput id="tags" ref={tagInputRef} value={tags} onChange={setTags} suggestions={tagNames} disabled={isSubmitting} /></div>
           <div className="field"><label htmlFor="date">Date and time (device timezone)</label><input ref={dateRef} id="date" name="date" type="datetime-local" step="60" value={date} onChange={(event) => { setDate(event.target.value); clearFieldError("date"); }} aria-describedby={invalidField === "date" ? "date-error" : undefined} aria-invalid={invalidField === "date"} required />{fieldError("date")}</div>
-          <div className="field proof-field"><label htmlFor="proof-files"><Paperclip size={15} aria-hidden="true" /> Proof (optional)</label>
-            <input ref={proofInputRef} id="proof-files" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple
-              onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
-            <p className="hint">Up to 3 photos or PDFs, 5 MB each. Stored on this device.</p>
-            {files.length > 0 && <p className="proof-selection">{files.map((file) => file.name).join(", ")}</p>}
-          </div>
           {formError && !invalidField && <p className="form-message error" role="alert">{formError}</p>}
-          {pendingProofs && <div className="proof-retry-actions">
-            <button className="inline-button" type="button" disabled={isSubmitting || isRetryingProofs} onClick={() => void attachPending(pendingProofs)}>
-              Retry proof upload for expense #{pendingProofs.expenseId}
-            </button>
-            <button className="inline-button" type="button" disabled={isRetryingProofs} onClick={() => { setPendingProofs(null); setFormError(""); }}>
-              Dismiss retry
-            </button>
-          </div>}
           {successMessage && <p className="form-message success" role="status">{successMessage}</p>}
-          <div className="form-actions"><button className="primary-button" type="submit" disabled={isSubmitting || !!pendingProofs}>{editingExpenseId !== null ? <Pencil size={17} aria-hidden="true" /> : <Plus size={17} aria-hidden="true" />}{isSubmitting ? editingExpenseId !== null ? "Saving…" : "Adding…" : editingExpenseId !== null ? "Save changes" : "Add expense"}</button><button className="secondary-button" type="reset" disabled={isSubmitting}>{editingExpenseId !== null ? "Cancel editing" : "Clear form"}</button></div>
+          <div className="form-actions"><button className="primary-button" type="submit" disabled={isSubmitting}>{editingExpenseId !== null ? <Pencil size={17} aria-hidden="true" /> : <Plus size={17} aria-hidden="true" />}{isSubmitting ? editingExpenseId !== null ? "Saving…" : "Adding…" : editingExpenseId !== null ? "Save changes" : "Add expense"}</button><button className="secondary-button" type="reset" disabled={isSubmitting}>{editingExpenseId !== null ? "Cancel editing" : "Clear form"}</button></div>
         </form>
       </section>
     </div>

@@ -6,11 +6,11 @@ Overview offers Day/Week/Month usage with a reference date, transaction count an
 
 Add expense opens a dialog. Choose an amount, description, one of your account's categories, and date/time. Category creation is available in the dialog; renaming/deleting unused categories is available in Integrations. Failed saves retain the draft. Edit updates the selected record through REST v1. Optional tags (for example a trip name) sit below category; choosing a tag filter, or clicking a tag on a row, shows a tag summary with total, transactions, date span, per-category and per-day spend, plus a PDF download for that tag. "No tag" lists untagged expenses. Tags are renamed or deleted in Integrations; deleting a tag keeps its expenses.
 
-Deletion requires confirmation. Proof bytes and integration source mappings are permanently removed. Undo is offered only when the deleted record had no proofs; it creates a replacement ID without restoring source mappings.
+Deletion requires confirmation. Proofs and integration source mappings are permanently removed. Undo is offered only when the deleted record had no proofs; it creates a replacement ID without restoring source mappings.
 
 ## Proofs, calendar and PDF
 
-Open Add proof on a transaction row to attach receipts or view existing files. Calendar & reports retains upload-at-entry and retry after partial proof failure. Up to three supported image/PDF files per record, 5 MiB each.
+Open Add proof on a transaction row to add a text proof (1-2000 characters, e.g. a transfer reference) or view existing proofs. Proofs are text-only; up to three per record. Proofs from earlier versions that were files are shown as legacy entries.
 
 Calendar groups all your records by date in your saved timezone. Select a date to inspect/edit/delete that day's expenses. Its search/date filters affect its list and PDF, while calendar markers show all activity. PDF date filters use inclusive calendar days in that timezone. Dashboard HTML export instead follows all dashboard filters and includes every matching page.
 
