@@ -1,0 +1,15 @@
+node_modules
+.next
+data
+.git
+.gitignore
+tests
+docs
+*.tsbuildinfo
+*.log
+.env*
+.claude-task-proof-text-link.md
+.DS_Store
+Dockerfile
+docker-compose.yml
+.dockerignore

@@ -1,0 +1,14 @@
+services:
+  finbot:
+    build: .
+    container_name: finbot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_PATH=/data/financial-tracker.db
+    volumes:
+      - finbot-data:/data
+
+volumes:
+  finbot-data:
