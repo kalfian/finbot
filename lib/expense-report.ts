@@ -98,7 +98,7 @@ const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute
 
   if (!validateReportRange(filter.start, filter.end)) throw new Error("Choose a valid date range.");
   const records = filterReportExpenses(expenses, filter).sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
-  const document = new PDFDocument({ size: "A4", layout: "landscape", margin: 38, bufferPages: true, info: { Title: "Expense Tracker - Expense report" } });
+  const document = new PDFDocument({ size: "A4", layout: "landscape", margin: 38, bufferPages: true, info: { Title: "Finbot - Expense report" } });
   const chunks: Buffer[] = [];
   document.on("data", (chunk: Buffer) => chunks.push(chunk));
   const width = document.page.width - 76;
@@ -119,11 +119,11 @@ const timeFormatter = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute
     const bottom = document.page.height - 52;
     rule(bottom - 11);
     document.fillColor(muted).font("Helvetica").fontSize(8)
-      .text("Expense Tracker / Expense report", 38, bottom)
+      .text("Finbot / Expense report", 38, bottom)
       .text(`${timezone}  |  IDR  |  ${period}`, 390, bottom, { width: 400, align: "right" });
   }
 
-  document.fillColor(blue).font("Helvetica-Bold").fontSize(10).text("EXPENSE TRACKER / DAILY EXPENSES", 38, 38);
+  document.fillColor(blue).font("Helvetica-Bold").fontSize(10).text("FINBOT / DAILY EXPENSES", 38, 38);
   document.fillColor(ink).fontSize(30).text("Expense report", 38, 61);
   document.fillColor(muted).font("Helvetica").fontSize(10).text(`${period}  |  ${timezone}  |  IDR`, 38, 103);
   const scope = [

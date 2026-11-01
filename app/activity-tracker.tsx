@@ -299,7 +299,7 @@ export default function ExpenseTracker({ user }: { user: CurrentUser }) {
 
   return <main className="tracker-shell">
     <header className="site-header">
-      <div className="wordmark"><span className="wordmark-rule" aria-hidden="true" /><Link href="/">Back to Ledger</Link></div>
+      <div className="wordmark"><span className="wordmark-rule" aria-hidden="true" /><Link href="/">Back to Finbot</Link></div>
       <div className="header-actions">
         <Link className="header-link" href="/integrations">Integrations</Link>
         <ThemeToggle />

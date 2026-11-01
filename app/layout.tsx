@@ -6,7 +6,7 @@ import "./tags.css";
 import { EXPENSE_RECORDER_DESIGN_CSS } from "@/lib/expense-recorder-design";
 
 export const metadata: Metadata = {
-  title: "Ledger",
+  title: "Finbot",
   description: "A calm place to keep track of everyday expenses.",
 };
 

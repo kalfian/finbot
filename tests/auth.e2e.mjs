@@ -203,7 +203,7 @@ try {
   });
 
   await page.goto(baseURL, { waitUntil: "domcontentloaded" });
-  await waitForHeading(page, "Sign in to your ledger");
+  await waitForHeading(page, "Sign in to Finbot");
   assert.equal(
     await page
       .getByRole("heading", { name: "Your money, at a glance." })
@@ -475,7 +475,7 @@ try {
     "/api/auth/logout",
     303,
   );
-  await waitForHeading(page, "Sign in to your ledger");
+  await waitForHeading(page, "Sign in to Finbot");
   assert.equal(
     await page
       .getByRole("heading", { name: "Your money, at a glance." })

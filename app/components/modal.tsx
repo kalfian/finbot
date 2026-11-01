@@ -63,7 +63,7 @@ export function Modal({
     >
       <div className="dialog-heading">
         <div>
-          <p className="eyebrow">YOUR PERSONAL LEDGER</p>
+          <p className="eyebrow">YOUR PERSONAL FINBOT</p>
           <h2 id={`${id}-title`}>{title}</h2>
         </div>
         <button

@@ -10,13 +10,13 @@ import { requirePageUser } from "@/lib/page-auth";
 import CategoryManager from "./category-manager";
 import TagManager from "./tag-manager";
 
-export const metadata = { title: "Integrations | Expense Tracker" };
+export const metadata = { title: "Integrations | Finbot" };
 
 export default async function Integrations() {
   const user = await requirePageUser();
   return <DashboardShell user={user} initialTimezone={getUserSettings(getDatabase(),user.id).timezone}><div className="legacy-surface"><main className="integrations-shell">
     <header className="site-header">
-      <Link className="wordmark" href="/"><span className="wordmark-rule" aria-hidden="true" /><span>Expense Tracker</span></Link>
+      <Link className="wordmark" href="/"><span className="wordmark-rule" aria-hidden="true" /><span>Finbot</span></Link>
       <div className="header-actions"><ThemeToggle /><Link href="/" className="header-link">Back to activity</Link><AccountNav username={user.username} role={user.role} /></div>
     </header>
     <div className="integrations-heading"><p className="section-label">Settings</p><h1>Integrations</h1><p>Manage access for external tools on this device.</p></div>

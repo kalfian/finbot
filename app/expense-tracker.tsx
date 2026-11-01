@@ -640,7 +640,7 @@ export default function ExpenseTracker() {
       <div className="workspace-topline">
         <span>
           <i className="status-dot" aria-hidden="true" />
-          YOUR PERSONAL LEDGER
+          YOUR PERSONAL FINBOT
         </span>
         <button type="button" className="timezone-pill" onClick={openSettings}>
           <span className="status-dot" />
@@ -832,9 +832,9 @@ export default function ExpenseTracker() {
             <h2 id="recent-heading">Your transactions</h2>
             <p>
               {loading
-                ? "Updating your ledger..."
+                ? "Updating Finbot..."
                 : `${totalCount} expense${totalCount === 1 ? "" : "s"}`}{" "}
-              {activeFilters > 0 ? "matching your filters" : "in your ledger"}
+              {activeFilters > 0 ? "matching your filters" : "in Finbot"}
             </p>
           </div>
           <button
@@ -1240,7 +1240,7 @@ export default function ExpenseTracker() {
       </section>
       <footer className="workspace-footer">
         <span>Made for the way you spend.</span>
-        <span>Ledger / Your everyday, accounted for.</span>
+        <span>Finbot / Your everyday, accounted for.</span>
       </footer>
       <Modal
         open={composer}

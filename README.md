@@ -1,6 +1,6 @@
-# Finbot / Ledger
+# Finbot
 
-A personal expense tracker with a redesigned **Ledger** dashboard: monthly spending, real category totals, searchable transactions, and a focused add/edit dialog. Cool light and navy dark themes retain the original simple sans-serif typography.
+A personal expense tracker with a redesigned **Finbot** dashboard: monthly spending, real category totals, searchable transactions, and a focused add/edit dialog. Cool light and navy dark themes retain the original simple sans-serif typography.
 
 The dashboard uses the same authenticated **REST v1** contracts as external integrations. Each account owns its expenses, categories, receipt proofs, monthly limit, source IDs, and integration tokens. Calendar and PDF reporting remain available through **Calendar & reports**. Integrations and administrator-only user management are linked from the navigation.
 
@@ -8,13 +8,13 @@ The dashboard uses the same authenticated **REST v1** contracts as external inte
 
 Captured from the production build using synthetic records in an isolated database.
 
-![Ledger desktop light](docs/images/ledger-desktop-light.png)
-![Ledger desktop dark](docs/images/ledger-desktop-dark.png)
-<img src="docs/images/ledger-mobile.png" alt="Ledger responsive mobile dashboard" width="390">
+![Finbot desktop light](docs/images/ledger-desktop-light.png)
+![Finbot desktop dark](docs/images/ledger-desktop-dark.png)
+<img src="docs/images/ledger-mobile.png" alt="Finbot responsive mobile dashboard" width="390">
 
 ### Focused expense entry
 
-![Ledger add expense dialog](docs/images/ledger-composer.png)
+![Finbot add expense dialog](docs/images/ledger-composer.png)
 
 ### Timezone preferences
 
@@ -39,7 +39,7 @@ npm run build
 npm start -- --hostname 127.0.0.1
 ```
 
-## Using Ledger
+## Using Finbot
 
 - Add/edit in a focused dialog; failed saves retain your draft.
 - Search descriptions or categories, select a category, and expand date/amount filters. Results display eight per page; HTML export includes all matching results.
@@ -62,7 +62,7 @@ Changing timezone never rewrites transaction timestamps: the database and write 
 
 ## Connect an LLM agent
 
-Expense Tracker is the **system of record**, not a chat bot or OCR service. The agent owns message intake, interpretation, authorized-user checks, optional photo understanding, and replies. It must write through the API/MCP and use returned numbers—not generate totals itself.
+Finbot is the **system of record**, not a chat bot or OCR service. The agent owns message intake, interpretation, authorized-user checks, optional photo understanding, and replies. It must write through the API/MCP and use returned numbers—not generate totals itself.
 
 For a message `Seblak 10.000`, a successful agent extracts `Seblak` / `Food` / IDR 10,000, sends `amountCents: 1000000`, and uses the message timestamp converted to ISO UTC. The adapter may include an optional stable `sourceId` when transport metadata is already available; otherwise it omits it and never asks the user. The agent then formats the returned expense ID and budget snapshot as a chat reply.
 

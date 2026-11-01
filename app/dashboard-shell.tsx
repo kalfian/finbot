@@ -116,7 +116,7 @@ export default function DashboardShell({
           <span className="brand-mark">
             <Icon name="wallet" size={24} />
           </span>
-          ledger<span className="brand-dot">.</span>
+          finbot<span className="brand-dot">.</span>
         </Link>
         <span className="rail-caption">PERSONAL SPACE</span>
         <button

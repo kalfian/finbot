@@ -6,7 +6,7 @@ import ThemeToggle from "../theme-toggle";
 import AccountNav from "../account-nav";
 import { requirePageUser } from "@/lib/page-auth";
 
-export const metadata = { title: "API documentation | Expense Tracker" };
+export const metadata = { title: "API documentation | Finbot" };
 
 export default async function Docs() {
   const user = await requirePageUser();
