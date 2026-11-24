@@ -1,11 +1,11 @@
 import type Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { databasePath } from "./database";
-import { MAX_PROOFS, MAX_PROOF_TEXT_LENGTH, type ExpenseProof } from "./proof-types";
+import { MAX_PROOFS, MAX_PROOF_BYTES, MAX_PROOF_TEXT_LENGTH, type ExpenseProof, type ProofFileType } from "./proof-types";
 
-export { MAX_PROOFS, MAX_PROOF_TEXT_LENGTH };
+export { MAX_PROOFS, MAX_PROOF_BYTES, MAX_PROOF_TEXT_LENGTH };
 
 type ProofRow = {
   id: string;
@@ -25,7 +25,7 @@ export class ProofError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
-// Legacy file proofs stay readable here; new proofs are text-only and never write files.
+// File proofs live outside public/, next to the database, and are only served through authenticated routes.
 export function proofsDirectory(): string {
   return join(dirname(databasePath()), "proofs");
 }
@@ -36,7 +36,7 @@ function proofExtension(mimeType: string): string | null {
 
 export function deleteProofFiles(proofs: ProofFile[], directory = proofsDirectory()): void {
   for (const proof of proofs) {
-    // Only legacy file proofs have bytes on disk; text/link MIME types map to no extension.
+    // Only file proofs have bytes on disk; text/link MIME types map to no extension.
     const extension = proofExtension(proof.mimeType);
     if (!extension) continue;
     try { rmSync(join(/* turbopackIgnore: true */ directory, `${proof.id}.${extension}`), { force: true }); } catch { /* Orphaned files remain private. */ }
@@ -56,10 +56,108 @@ function validSourceId(sourceId: string | undefined): void {
   }
 }
 
-export function listProofs(database: Database.Database, userId: number, expenseId: number): ExpenseProof[] {
-  if (!database.prepare("SELECT id FROM expenses WHERE id = ? AND user_id = ?").get(expenseId, userId)) {
+function detectType(bytes: Uint8Array): { mimeType: ProofFileType; extension: string } | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { mimeType: "image/jpeg", extension: "jpg" };
+  }
+  if (bytes.length >= 8 && Buffer.from(bytes.subarray(0, 8)).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    return { mimeType: "image/png", extension: "png" };
+  }
+  if (bytes.length >= 12 && Buffer.from(bytes.subarray(0, 4)).toString() === "RIFF"
+    && Buffer.from(bytes.subarray(8, 12)).toString() === "WEBP") {
+    return { mimeType: "image/webp", extension: "webp" };
+  }
+  if (bytes.length >= 5 && Buffer.from(bytes.subarray(0, 5)).toString() === "%PDF-") {
+    return { mimeType: "application/pdf", extension: "pdf" };
+  }
+  return null;
+}
+
+function filenameOf(value: string, extension: string): string {
+  return value.replaceAll("\\", "/").split("/").at(-1)?.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 120) || `proof.${extension}`;
+}
+
+/** Declared types that defer to byte sniffing (e.g. curl -F sends octet-stream for unknown extensions such as .webp). */
+function declaredType(value: string): string {
+  const type = value.split(";")[0].trim().toLowerCase();
+  return type === "application/octet-stream" ? "" : type;
+}
+
+function ownedExpense(database: Database.Database, userId: number, expenseId: number): boolean {
+  return !!database.prepare("SELECT id FROM expenses WHERE id = ? AND user_id = ?").get(expenseId, userId);
+}
+
+/** Throws unless the user owns the expense and it can accept one more proof (or sourceId already names one). */
+export function assertProofCapacity(database: Database.Database, userId: number, expenseId: number, sourceId?: string): void {
+  if (!Number.isSafeInteger(expenseId) || expenseId <= 0 || !ownedExpense(database, userId, expenseId)) {
     throw new ProofError("Expense not found.", 404);
   }
+  validSourceId(sourceId);
+  if (sourceId && database.prepare("SELECT 1 FROM expense_proofs WHERE expense_id = ? AND source_id = ?").get(expenseId, sourceId)) return;
+  const count = database.prepare("SELECT COUNT(*) AS count FROM expense_proofs WHERE expense_id = ?")
+    .get(expenseId) as { count: number };
+  if (count.count >= MAX_PROOFS) throw new ProofError(`This expense already has ${MAX_PROOFS} proofs.`, 409);
+}
+
+export type SaveProofOptions = {
+  /** Runs inside the same SQLite transaction that records (or replays) the proof; throw to abort, e.g. a used upload token. */
+  claim?: (proofId: string) => void;
+};
+
+export async function saveProof(
+  database: Database.Database,
+  userId: number,
+  expenseId: number,
+  file: File,
+  directory = proofsDirectory(),
+  sourceId?: string,
+  options: SaveProofOptions = {},
+): Promise<{ proof: ExpenseProof; replayed: boolean }> {
+  if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw new ProofError("Expense not found.", 404);
+  if (!file.size || file.size > MAX_PROOF_BYTES) throw new ProofError("Proof file must be 1 byte to 5 MB.", 400);
+  validSourceId(sourceId);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const type = detectType(bytes);
+  const declared = declaredType(file.type);
+  if (!type || (declared && declared !== type.mimeType)) {
+    throw new ProofError("Proof must be a JPEG, PNG, WebP, or PDF file whose content matches its type.", 400);
+  }
+  // Everything below is synchronous, so the ownership, replay and limit checks cannot interleave with another upload.
+  if (!ownedExpense(database, userId, expenseId)) throw new ProofError("Expense not found.", 404);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const existing = sourceId && database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? AND source_id = ?")
+    .get(expenseId, sourceId) as ProofRow | undefined;
+  if (existing) {
+    if (existing.kind !== "file" || existing.sha256 !== sha256) throw new ProofError("sourceId already belongs to a different proof.", 409);
+    database.transaction(() => options.claim?.(existing.id))();
+    return { proof: toProof(existing), replayed: true };
+  }
+  const count = database.prepare("SELECT COUNT(*) AS count FROM expense_proofs WHERE expense_id = ?")
+    .get(expenseId) as { count: number };
+  if (count.count >= MAX_PROOFS) throw new ProofError(`This expense already has ${MAX_PROOFS} proofs.`, 409);
+
+  const id = randomUUID();
+  const filename = filenameOf(file.name, type.extension);
+  const path = join(/* turbopackIgnore: true */ directory, `${id}.${type.extension}`);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
+  try {
+    database.transaction(() => {
+      options.claim?.(id);
+      database.prepare(`INSERT INTO expense_proofs
+        (id, expense_id, kind, text_content, filename, mime_type, size_bytes, sha256, source_id, created_at)
+        VALUES (?, ?, 'file', NULL, ?, ?, ?, ?, ?, ?)`)
+        .run(id, expenseId, filename, type.mimeType, bytes.length, sha256, sourceId ?? null, new Date().toISOString());
+    })();
+  } catch (error) {
+    try { unlinkSync(path); } catch { /* The private orphan is harmless. */ }
+    throw error;
+  }
+  return { proof: toProof(database.prepare("SELECT * FROM expense_proofs WHERE id = ?").get(id) as ProofRow), replayed: false };
+}
+
+export function listProofs(database: Database.Database, userId: number, expenseId: number): ExpenseProof[] {
+  if (!ownedExpense(database, userId, expenseId)) throw new ProofError("Expense not found.", 404);
   return (database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? ORDER BY created_at, id")
     .all(expenseId) as ProofRow[]).map(toProof);
 }
@@ -72,9 +170,7 @@ export function saveTextProof(database: Database.Database, userId: number, expen
     throw new ProofError(`Proof text must contain 1-${MAX_PROOF_TEXT_LENGTH} characters.`, 400);
   }
   validSourceId(sourceId);
-  if (!database.prepare("SELECT id FROM expenses WHERE id = ? AND user_id = ?").get(expenseId, userId)) {
-    throw new ProofError("Expense not found.", 404);
-  }
+  if (!ownedExpense(database, userId, expenseId)) throw new ProofError("Expense not found.", 404);
   const sha256 = createHash("sha256").update(content).digest("hex");
   const existing = sourceId && database.prepare("SELECT * FROM expense_proofs WHERE expense_id = ? AND source_id = ?")
     .get(expenseId, sourceId) as ProofRow | undefined;
@@ -84,7 +180,7 @@ export function saveTextProof(database: Database.Database, userId: number, expen
   }
   const count = database.prepare("SELECT COUNT(*) AS count FROM expense_proofs WHERE expense_id = ?")
     .get(expenseId) as { count: number };
-  if (count.count >= MAX_PROOFS) throw new ProofError("This expense already has 3 proofs.", 409);
+  if (count.count >= MAX_PROOFS) throw new ProofError(`This expense already has ${MAX_PROOFS} proofs.`, 409);
 
   const id = randomUUID();
   database.prepare(`INSERT INTO expense_proofs
@@ -106,7 +202,7 @@ export function readProof(database: Database.Database, userId: number, expenseId
     WHERE expense_proofs.expense_id = ? AND expense_proofs.id = ? AND expenses.user_id = ?
   `).get(expenseId, proofId, userId) as ProofRow | undefined;
   if (!row) throw new ProofError("Proof not found.", 404);
-  // Text and legacy link proofs return their stored text; only legacy file proofs read bytes.
+  // Text and legacy link proofs return their stored text; only file proofs read bytes.
   if (row.kind !== "file") {
     if (row.text_content === null) throw new Error("Invalid stored proof content.");
     return { proof: toProof(row), text: row.text_content };

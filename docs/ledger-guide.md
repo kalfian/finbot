@@ -10,7 +10,7 @@ Deletion requires confirmation. Proofs and integration source mappings are perma
 
 ## Proofs, calendar and PDF
 
-Open Add proof on a transaction row to add a text proof (1-2000 characters, e.g. a transfer reference) or view existing proofs. Proofs are text-only; up to three per record. Proofs from earlier versions that were files are shown as legacy entries.
+Open Add proof on a transaction row to attach a photo or PDF (JPEG, PNG, WebP, PDF; 5 MB each), add a text proof (1-2000 characters, e.g. a transfer reference), or open existing proofs. Up to three proofs per record across both kinds.
 
 Calendar groups all your records by date in your saved timezone. Select a date to inspect/edit/delete that day's expenses. Its search/date filters affect its list and PDF, while calendar markers show all activity. PDF date filters use inclusive calendar days in that timezone. Dashboard HTML export instead follows all dashboard filters and includes every matching page.
 

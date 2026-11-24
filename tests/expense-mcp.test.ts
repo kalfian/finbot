@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { initializeDatabase } from "../lib/database";
 import { handleExpenseMcp } from "../lib/expense-mcp";
 import { createUserRepository } from "../lib/auth";
+import { postProofUpload } from "../lib/proof-api";
 
 test("MCP initializes, lists tools, creates records, and returns filtered summary", async () => {
   const database = new Database(":memory:");
@@ -27,7 +28,7 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     const init = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
     assert.equal(init.result.serverInfo.name, "expense-tracker");
     const tools = await call("tools/list", {});
-    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_text_proof", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense", "list_tags", "tag_expenses", "rename_tag", "delete_tag"].sort());
+    assert.deepEqual(tools.result.tools.map((item: { name: string }) => item.name).sort(), ["get_settings", "set_timezone", "usage_summary", "attach_expense_text_proof", "create_proof_upload", "budget_status", "create_category", "create_expense", "delete_category", "delete_expense", "expense_summary", "export_report_pdf", "get_expense_proof", "list_categories", "list_expense_proofs", "list_expenses", "set_monthly_limit", "update_category", "update_expense", "list_tags", "tag_expenses", "rename_tag", "delete_tag"].sort());
     const createdCategory = await call("tools/call", { name: "create_category", arguments: { name: "Travel" } });
     const categoryId = JSON.parse(createdCategory.result.content[0].text).category.id;
     const renamedCategory = await call("tools/call", { name: "update_category", arguments: { categoryId, name: "Transit" } });
@@ -51,10 +52,33 @@ test("MCP initializes, lists tools, creates records, and returns filtered summar
     assert.equal(JSON.parse(attachedReplay.result.content[0].text).replayed, true);
     const emptyProof = await call("tools/call", { name: "attach_expense_text_proof", arguments: { expenseId, text: "   " } });
     assert.equal(JSON.parse(emptyProof.result.content[0].text).code, "PROOF_REJECTED");
-    const listedProofs = await call("tools/call", { name: "list_expense_proofs", arguments: { expenseId } });
-    assert.equal(JSON.parse(listedProofs.result.content[0].text).proofs.length, 1);
     const fetchedProof = await call("tools/call", { name: "get_expense_proof", arguments: { expenseId, proofId: proof.id } });
     assert.deepEqual(fetchedProof.result.content, [{ type: "text", text: "Paid via QRIS ref 123" }]);
+
+    // File proofs: the agent asks for a single-use link, then uploads the local file over plain HTTP.
+    const link = JSON.parse((await call("tools/call", { name: "create_proof_upload", arguments: { expenseId } })).result.content[0].text);
+    assert.equal(link.method, "POST");
+    assert.equal(link.maxBytes, 5 * 1024 * 1024);
+    assert.deepEqual(link.allowedTypes, ["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+    assert.match(link.uploadUrl, /^http:\/\/localhost\/api\/v1\/proof-uploads\/pu1\.[\w-]+\.[\w-]{43}$/);
+    assert.ok(link.curl.includes(link.uploadUrl));
+    assert.ok(Date.parse(link.expiresAt) - Date.now() <= 600_000);
+    const png = Buffer.from("89504e470d0a1a0a00000000", "hex");
+    const form = new FormData();
+    form.set("file", new File([png], "receipt.png", { type: "image/png" }));
+    const uploaded = await postProofUpload(new Request(link.uploadUrl, { method: "POST", body: form }), database,
+      new URL(link.uploadUrl).pathname.split("/").at(-1)!, { directory: proofDirectory });
+    assert.equal(uploaded.status, 201);
+    const fileProof = (await uploaded.json() as { proof: { id: string; kind: string; mimeType: string } }).proof;
+    assert.equal(fileProof.kind, "file");
+    const listedProofs = await call("tools/call", { name: "list_expense_proofs", arguments: { expenseId } });
+    assert.equal(JSON.parse(listedProofs.result.content[0].text).proofs.length, 2);
+    const fetchedFile = await call("tools/call", { name: "get_expense_proof", arguments: { expenseId, proofId: fileProof.id } });
+    assert.equal(fetchedFile.result.content[0].resource.mimeType, "image/png");
+    assert.deepEqual(Buffer.from(fetchedFile.result.content[0].resource.blob, "base64"), png);
+    assert.equal(readdirSync(proofDirectory).length, 1);
+    const missingLink = await call("tools/call", { name: "create_proof_upload", arguments: { expenseId: 999 } });
+    assert.equal(JSON.parse(missingLink.result.content[0].text).code, "PROOF_UPLOAD_REJECTED");
     const updated = await call("tools/call", { name: "update_expense", arguments: {
       expenseId, amountCents: 175000, description: "Train and bus", category: "Transit", date: input.date,
     } });
@@ -117,6 +141,9 @@ test("MCP reads and writes only the authenticated user's ledger", async () => {
     const forbiddenUpdate = await call(user.id, "update_expense", { expenseId: adminExpenseId,
       amountCents: 3000, description: "Changed", category: "Other", date: input.date });
     assert.equal(forbiddenUpdate.result.isError, true);
+    const forbiddenUpload = await call(user.id, "create_proof_upload", { expenseId: adminExpenseId });
+    assert.equal(forbiddenUpload.result.isError, true);
+    assert.equal(JSON.parse(forbiddenUpload.result.content[0].text).code, "PROOF_UPLOAD_REJECTED");
     const forbiddenDelete = await call(user.id, "delete_expense", { expenseId: adminExpenseId, confirm: true });
     assert.equal(forbiddenDelete.result.isError, true);
     assert.equal(JSON.parse((await call(1, "list_expenses", {})).result.content[0].text).expenses.length, 1);

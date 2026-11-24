@@ -49,7 +49,7 @@ Call a tool:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_categories","arguments":{}}}
 ```
 
-Tool results that contain normal structured data return it as JSON inside `result.content[0].text`. PDF reports return embedded resources with base64 bytes. `get_expense_proof` returns proof text as plain text (legacy file proofs return a base64 resource).
+Tool results that contain normal structured data return it as JSON inside `result.content[0].text`. PDF reports return embedded resources with base64 bytes. `get_expense_proof` returns text proofs as plain text and file proofs as a base64 embedded resource.
 
 ## 4. Tool Catalog
 
@@ -64,7 +64,8 @@ Tool results that contain normal structured data return it as JSON inside `resul
 | `update_expense` | Replace editable expense fields | `expenseId`, `amountCents`, `description`, `category`, `date`; optional `tags` (omit to keep) |
 | `delete_expense` | Permanently delete an expense and proofs | `expenseId`, `confirm: true` |
 | `list_expense_proofs` | List proof metadata | `expenseId` |
-| `attach_expense_text_proof` | Attach proof text (1-2000 characters); proofs are text-only | `expenseId`, `text`; optional `sourceId` |
+| `attach_expense_text_proof` | Attach proof text (1-2000 characters) | `expenseId`, `text`; optional `sourceId` |
+| `create_proof_upload` | Get a one-time HTTP link to upload a photo/PDF proof without base64 | `expenseId`; optional `sourceId` |
 | `get_expense_proof` | Read one proof | `expenseId`, `proofId` |
 | `budget_status` | Read daily/monthly totals and recurring limit | optional `date` (`YYYY-MM-DD`) |
 | `set_monthly_limit` | Set or clear recurring monthly limit | positive `monthlyLimitCents` or `null` |
@@ -85,7 +86,8 @@ Tags are optional free-form labels (for example a trip, `Liburan Bali`) that sit
 | --- | --- | --- |
 | `GET/POST /api/v1/expenses` | `list_expenses`, `create_expense` | complete |
 | `PATCH/DELETE /api/v1/expenses/:id` | `update_expense`, `delete_expense` | complete |
-| `GET/POST /api/v1/expenses/:id/proofs` | `list_expense_proofs`, `attach_expense_text_proof` | complete |
+| `GET/POST /api/v1/expenses/:id/proofs` | `list_expense_proofs`, `attach_expense_text_proof`, `create_proof_upload` (files) | complete |
+| `POST /api/v1/proof-uploads/:token` | upload target returned by `create_proof_upload` | complete |
 | `GET /api/v1/expenses/:id/proofs/:proofId` | `get_expense_proof` | complete |
 | `GET/PUT /api/v1/budget` | `budget_status`, `set_monthly_limit` | complete |
 | `GET/POST /api/v1/categories` | `list_categories`, `create_category` | complete |
@@ -141,8 +143,8 @@ Required flow:
 2. If there are multiple plausible totals or the image is unreadable, ask the user. Do not write yet.
 3. Call `list_categories` and select the closest existing category. Do not invent an unregistered category.
 4. Call `create_expense` once for the grand total.
-5. After creation succeeds, call `attach_expense_text_proof` with the returned expense ID and a short text summary of the receipt (merchant, total, date, reference). Finbot does not store images; proofs are text-only.
-6. Report the proof as attached only after the attachment tool succeeds.
+5. After creation succeeds, attach the original photo: call `create_proof_upload` with the returned expense ID, then upload the local image file to the returned `uploadUrl` over HTTP (see below). Do not base64-encode it into a tool call. If the agent has no file access, fall back to `attach_expense_text_proof` with a short summary (merchant, total, date, reference).
+6. Report the proof as attached only after the upload returns HTTP 201 (or 200 with `replayed: true`) and a `proof.id`.
 
 Example expense call:
 
@@ -150,13 +152,29 @@ Example expense call:
 {"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"create_expense","arguments":{"amountCents":8750000,"description":"Supermarket invoice","category":"Shopping","date":"2026-09-29T05:20:00.000Z","sourceId":"telegram:999443054:732"}}}
 ```
 
-Example proof call:
+Example upload-link call:
 
 ```json
-{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"attach_expense_text_proof","arguments":{"expenseId":43,"text":"Supermarket invoice, total Rp87.500, 2026-09-29","sourceId":"telegram:999443054:732:proof:1"}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"create_proof_upload","arguments":{"expenseId":43,"sourceId":"telegram:999443054:732:proof:1"}}}
 ```
 
-If the proof call fails after expense creation, retry only `attach_expense_text_proof`. Do not create another expense.
+The result text is JSON such as:
+
+```json
+{"expenseId":43,"uploadUrl":"https://finbot.example/api/v1/proof-uploads/pu1.<payload>.<signature>","method":"POST","expiresAt":"2026-09-29T05:31:00.000Z","expiresInSeconds":600,"maxBytes":5242880,"allowedTypes":["image/jpeg","image/png","image/webp","application/pdf"],"fileField":"file","singleUse":true,"curl":"curl -sS --fail-with-body -F 'file=@/path/to/receipt.jpg' '<uploadUrl>'","curlRawBody":"..."}
+```
+
+Then upload the file the adapter saved locally (no `Authorization` header; the URL is the credential):
+
+```sh
+curl -sS --fail-with-body -F 'file=@/tmp/telegram/732.jpg' '<uploadUrl>'
+# or a raw body:
+curl -sS --fail-with-body -H 'Content-Type: image/jpeg' --data-binary '@/tmp/telegram/732.jpg' '<uploadUrl>?filename=receipt.jpg'
+```
+
+The response is `{"proof":{"id":"…","kind":"file","mimeType":"image/jpeg",…},"replayed":false}` with HTTP 201. Upload errors are plain JSON `{ "error": "…" }`: 400 wrong/unsupported file content or empty file, 401 invalid link, 404 expense gone, 409 three proofs already or `sourceId` used by different content, 410 link expired or already used, 413 over 5 MB, 415 unsupported Content-Type. A rejected upload leaves the link usable until it expires.
+
+If the upload fails or the link expires after expense creation, call `create_proof_upload` again (same `sourceId`) and re-upload; with a `sourceId` an identical file that already landed returns `replayed: true` instead of a duplicate. Do not create another expense. Treat `uploadUrl` like a password until it is used: do not post it to chats or logs.
 
 ## 7. Corrections and Deletion
 
@@ -213,6 +231,7 @@ Common codes:
 - `CATEGORY_IN_USE`: move/delete associated expenses first.
 - `INVALID_TAG` / `TAG_NAME_CONFLICT` / `TAG_NOT_FOUND`: fix the tag name, choose another name, or refresh with `list_tags`.
 - `PROOF_REJECTED`: verify ownership, 1-2000 character text, and the three-proof limit.
+- `PROOF_UPLOAD_REJECTED`: the expense is not yours, does not exist, already has three proofs, or `sourceId` is invalid.
 
 ## 11. Completion Checklist
 
@@ -224,7 +243,7 @@ Before replying “saved” or “updated”, verify all applicable items:
 - The amount was converted to cents correctly.
 - The date is the intended UTC instant.
 - Returned budget totals, not guessed totals, are used in the reply.
-- For a receipt, the proof call succeeded before claiming it is attached.
+- For a receipt, the file upload (or text proof call) succeeded and returned a `proof.id` before claiming it is attached.
 - `sourceId` was supplied by the adapter or omitted; the user was never asked for it.
 
 ## Timezone and usage tools

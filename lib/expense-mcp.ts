@@ -13,8 +13,10 @@ import { deleteProofFiles, listProofs, ProofError, readProof, saveTextProof } fr
 import { CategoryConflictError, CategoryInUseError, createCategoryRepository } from "./categories";
 import { createTagRepository, MAX_TAG_LENGTH, MAX_TAGS_PER_EXPENSE, TagConflictError, validateTagName } from "./tags";
 import { dateKeyInZone } from "./timezone";
+import { issueProofUpload, publicOrigin } from "./proof-uploads";
 
-export function createExpenseMcpServer(database: Database.Database, userId: number, proofDirectory?: string): McpServer {
+export function createExpenseMcpServer(database: Database.Database, userId: number, proofDirectory?: string,
+  options: { origin?: string } = {}): McpServer {
   const server = new McpServer({ name: "expense-tracker", version: "1.0.0" });
   const repository = createExpenseRepository(database, userId);
   const categories = createCategoryRepository(database, userId);
@@ -108,7 +110,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("delete_expense", {
     title: "Delete expense",
-    description: "Permanently delete an owned expense, its source mapping, and proofs (including any legacy proof files). Invoke only after the user explicitly confirms deletion.",
+    description: "Permanently delete an owned expense, its source mapping, and proofs (including private proof files). Invoke only after the user explicitly confirms deletion.",
     inputSchema: {
       expenseId: z.number().int().positive().safe(),
       confirm: z.boolean(),
@@ -130,16 +132,31 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("list_expense_proofs", {
     title: "List expense proofs",
-    description: "List proof metadata attached to an expense. New proofs are kind text with textContent; legacy rows may be kind file or link.",
+    description: "List proof metadata attached to an expense. kind is file (image/PDF; read it with get_expense_proof) or text (includes textContent); legacy rows may be kind link.",
     inputSchema: { expenseId: z.number().int().positive().safe() },
   }, async ({ expenseId }) => {
     try { return result({ proofs: listProofs(database, userId, expenseId) }); }
     catch (error) { return failure("PROOF_LIST_FAILED", error instanceof Error ? error.message : "Proofs unavailable.",
       "Verify the expenseId belongs to this user, then retry."); }
   });
+  server.registerTool("create_proof_upload", {
+    title: "Create proof file upload link",
+    description: "Attach a photo or PDF proof (JPEG, PNG, WebP, PDF; 5 MB max; 3 proofs per expense) without base64. Returns a single-use uploadUrl valid for 10 minutes and bound to this user and expense. Then upload the local file yourself with HTTP, e.g. curl -F 'file=@/path/receipt.jpg' '<uploadUrl>' (multipart field file) or a raw body with the file's Content-Type. No Authorization header is needed; never show the URL to others. The upload returns the proof JSON; a used or expired link needs a new call. sourceId is optional (use an existing transport event ID so a retried upload with a fresh link replays instead of duplicating); never ask the end user for one.",
+    inputSchema: {
+      expenseId: z.number().int().positive().safe(),
+      sourceId: z.string().min(1).max(200).optional(),
+    },
+  }, async ({ expenseId, sourceId }) => {
+    try { return result({ expenseId, ...issueProofUpload(database, userId, expenseId, { sourceId, origin: options.origin }) }); }
+    catch (error) {
+      return failure(error instanceof ProofError ? "PROOF_UPLOAD_REJECTED" : "PROOF_UPLOAD_FAILED",
+        error instanceof ProofError ? error.message : "Upload link could not be created.",
+        "Verify the expenseId belongs to this user and has fewer than 3 proofs, then retry.");
+    }
+  });
   server.registerTool("attach_expense_text_proof", {
-    title: "Attach expense proof",
-    description: "Save free-form text (1-2000 characters, e.g. a transfer reference, receipt transcript, or order URL) as proof on an existing expense. Proofs are text-only; 3 proofs per expense. sourceId is optional; use an existing transport event ID for safe retries or omit it, and never ask the end user for one.",
+    title: "Attach expense text proof",
+    description: "Save free-form text (1-2000 characters, e.g. a transfer reference, receipt transcript, or order URL) as proof on an existing expense. For a photo or PDF use create_proof_upload instead. 3 proofs per expense across all kinds. sourceId is optional; use an existing transport event ID for safe retries or omit it, and never ask the end user for one.",
     inputSchema: {
       expenseId: z.number().int().positive().safe(),
       text: z.string().min(1).max(4000),
@@ -155,7 +172,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
   });
   server.registerTool("get_expense_proof", {
     title: "Read expense proof",
-    description: "Return a proof's text as plain text. Legacy file proofs are returned as a base64 embedded resource.",
+    description: "Return a text proof as plain text, or a file proof (image/PDF) as a base64 embedded resource.",
     inputSchema: { expenseId: z.number().int().positive().safe(), proofId: z.string().uuid() },
   }, async ({ expenseId, proofId }) => {
     try {
@@ -346,7 +363,7 @@ export function createExpenseMcpServer(database: Database.Database, userId: numb
 
 export async function handleExpenseMcp(request: Request, database: Database.Database, userId: number, proofDirectory?: string): Promise<Response> {
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
-  const server = createExpenseMcpServer(database, userId, proofDirectory);
+  const server = createExpenseMcpServer(database, userId, proofDirectory, { origin: publicOrigin(request) });
   await server.connect(transport);
   try {
     return await transport.handleRequest(request);

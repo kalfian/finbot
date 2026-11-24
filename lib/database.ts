@@ -66,6 +66,7 @@ export function initializeDatabase(database = openDatabase()): void {
   migrateBudgetTable(database);
   createExpenseSources(database);
   createProofsTable(database);
+  createProofUploadTokensTable(database);
   createExpenseCategories(database);
   createTagTables(database);
   createAppSecretsTable(database);
@@ -182,6 +183,22 @@ function createProofsTable(database: Database.Database): void {
   if (!columns.some((column) => column.name === "text_content")) {
     database.exec("ALTER TABLE expense_proofs ADD COLUMN text_content TEXT;");
   }
+}
+
+// Records the nonce of each consumed proof upload link (see lib/proof-uploads.ts) so it cannot be replayed.
+// Rows carry no foreign keys: deleting an expense must not be blocked, and rows expire on their own.
+function createProofUploadTokensTable(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS proof_upload_tokens (
+      nonce TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expense_id INTEGER NOT NULL,
+      proof_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS proof_upload_tokens_expires_at ON proof_upload_tokens(expires_at);
+  `);
 }
 
 function createExpenseSources(database: Database.Database): void {
