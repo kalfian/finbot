@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FileText, Paperclip, StickyNote, Type, Upload } from "lucide-react";
 import { MAX_PROOFS, MAX_PROOF_BYTES, MAX_PROOF_TEXT_LENGTH, PROOF_FILE_TYPES, type ExpenseProof } from "@/lib/proof-types";
 import { addTextProof, uploadProof } from "@/lib/expense-form";
+import { ProofViewer } from "./components/proof-viewer";
 
 type Props = { expenseId: number; count: number; onChange: () => Promise<boolean> };
 type PendingProof =
@@ -16,6 +17,7 @@ export default function ProofControls({ expenseId, count, onChange }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<PendingProof[]>([]);
+  const [viewing, setViewing] = useState<ExpenseProof | null>(null);
 
   async function load() {
     const response = await fetch(`/api/v1/expenses/${expenseId}/proofs`);
@@ -89,7 +91,13 @@ export default function ProofControls({ expenseId, count, onChange }: Props) {
       {proofs?.length === 0 && <p>No proofs attached yet.</p>}
       {proofs?.map((proof) => proof.textContent !== undefined
         ? <p key={proof.id} className="proof-text"><StickyNote size={14} aria-hidden="true" /> {proof.textContent}</p>
-        : <a key={proof.id} href={`/api/v1/expenses/${expenseId}/proofs/${proof.id}`} target="_blank" rel="noopener noreferrer">
+        : <a key={proof.id} href={`/api/v1/expenses/${expenseId}/proofs/${proof.id}`} target="_blank" rel="noopener noreferrer"
+          onClick={(event) => {
+            // Let modified clicks (new tab/window, download) keep the native link behaviour.
+            if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            setViewing(proof);
+          }}>
           <FileText size={14} aria-hidden="true" /> {proof.filename}
         </a>)}
       {count < MAX_PROOFS && <div className="proof-actions">
@@ -110,5 +118,7 @@ export default function ProofControls({ expenseId, count, onChange }: Props) {
       {pending.length > 0 && <button className="proof-toggle" type="button" disabled={busy}
         onClick={() => void save(pending)}>Retry saving proof</button>}
     </div>}
+    {viewing && <ProofViewer open onClose={() => setViewing(null)}
+      src={`/api/v1/expenses/${expenseId}/proofs/${viewing.id}`} filename={viewing.filename} mimeType={viewing.mimeType} />}
   </div>;
 }

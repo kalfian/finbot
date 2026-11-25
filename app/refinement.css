@@ -638,3 +638,30 @@ a:focus-visible {
 /* Keep the original sans-serif typography across headings and amounts. */
 h1, .dialog-heading h2, .state strong { font-weight: 700; }
 .hero-amount, .amount-input input { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Proof viewer popup (image / PDF). Native <dialog> is top-layer, so rows never clip it. */
+.proof-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(960px, calc(100vw - 24px));
+  max-width: none;
+  height: min(820px, calc(100vh - 24px));
+  height: min(820px, calc(100dvh - 24px));
+  max-height: none;
+  padding: 16px;
+  overflow: hidden;
+}
+.proof-dialog .dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.proof-dialog .dialog-heading > div { min-width: 0; }
+.proof-dialog .dialog-heading h2 { overflow-wrap: anywhere; font-size: 1rem; }
+.proof-viewer { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.proof-image { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.proof-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+.proof-viewer-status { color: var(--muted); }
+.proof-viewer-footer { display: flex; justify-content: flex-end; }
+.proof-viewer-footer a { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 480px) {
+  .proof-dialog[open] { width: calc(100vw - 16px); height: calc(100dvh - 16px); padding: 12px; }
+}
